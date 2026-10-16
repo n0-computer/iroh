@@ -1,4 +1,5 @@
 use std::{
+    hash::BuildHasher,
     io,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     num::NonZeroUsize,
@@ -12,7 +13,7 @@ use n0_watcher::Watchable;
 use netwatch::{UdpSender, UdpSocket};
 use noq::SocketId;
 use pin_project::pin_project;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
 use super::{RecvInfo, Transmit};
 use crate::metrics::{EndpointMetrics, SocketMetrics};
@@ -23,6 +24,9 @@ pub(crate) struct IpTransport {
     socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
     metrics: Arc<SocketMetrics>,
+    /// Whether this is an extra socket, bound with `SO_REUSEPORT` to the address of the
+    /// transport before it
+    is_copy: bool,
 }
 
 impl std::fmt::Display for IpTransport {
@@ -30,6 +34,30 @@ impl std::fmt::Display for IpTransport {
         let version = if self.config.is_ipv4() { "v4" } else { "v6" };
         write!(f, "IpTransport({version})")
     }
+}
+
+/// Whether the kernel spreads incoming flows over sockets that share an address with
+/// `SO_REUSEPORT`
+///
+/// Linux does. Other systems either lack `SO_REUSEPORT` or deliver all unicast datagrams of an
+/// address to one of the sockets, so extra sockets would never receive.
+const REUSE_PORT_BALANCES: bool = cfg!(any(target_os = "linux", target_os = "android"));
+
+/// Returns the options to bind a socket with, setting `SO_REUSEPORT` if `reuse_port` is set
+fn bind_options(reuse_port: bool) -> netwatch::BindOptions {
+    let opts = netwatch::BindOptions::new();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if reuse_port {
+        // The hook reruns on every rebind, so rebound sockets share the address again.
+        return opts.configure_socket(|socket, _family| {
+            socket2::SockRef::from(&socket).set_reuse_port(true)
+        });
+    }
+    debug_assert!(
+        !reuse_port,
+        "SO_REUSEPORT requested where it does not balance"
+    );
+    opts
 }
 
 /// IP transport configuration
@@ -169,10 +197,41 @@ impl From<Config> for SocketAddr {
 }
 
 impl IpTransport {
-    pub(crate) fn bind(config: Config, metrics: Arc<SocketMetrics>) -> io::Result<Self> {
-        let addr: SocketAddr = config.into();
-        debug!(?addr, "binding");
-        let socket = netwatch::UdpSocket::bind_full(addr).inspect_err(|err| {
+    /// Binds `count` sockets for `config`
+    ///
+    /// With a `count` above one, all sockets share the address of the first with
+    /// `SO_REUSEPORT`, and the kernel spreads incoming flows over them.
+    fn bind_all(
+        config: Config,
+        count: NonZeroUsize,
+        metrics: &Arc<SocketMetrics>,
+    ) -> io::Result<Vec<Self>> {
+        let count = if count.get() > 1 && !REUSE_PORT_BALANCES {
+            warn!("binding one socket per IP transport, SO_REUSEPORT does not spread load here");
+            1
+        } else {
+            count.get()
+        };
+        let reuse_port = count > 1;
+        let first = Self::bind(config, config.into(), reuse_port, false, metrics.clone())?;
+        // Copies bind the port the first socket got, which matters for port 0.
+        let addr = first.local_addr.get();
+        let mut transports = vec![first];
+        for _ in 1..count {
+            transports.push(Self::bind(config, addr, true, true, metrics.clone())?);
+        }
+        Ok(transports)
+    }
+
+    fn bind(
+        config: Config,
+        addr: SocketAddr,
+        reuse_port: bool,
+        is_copy: bool,
+        metrics: Arc<SocketMetrics>,
+    ) -> io::Result<Self> {
+        debug!(?addr, reuse_port, "binding");
+        let socket = UdpSocket::bind_with(addr, bind_options(reuse_port)).inspect_err(|err| {
             debug!(%addr, "failed to bind: {err:#}");
         })?;
         let local_addr = socket.local_addr()?;
@@ -186,7 +245,13 @@ impl IpTransport {
             socket: Arc::new(socket),
             local_addr,
             metrics,
+            is_copy,
         })
+    }
+
+    /// Whether `self` and `other` are the same socket
+    pub(super) fn is_same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.socket, &other.socket)
     }
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
@@ -356,12 +421,20 @@ impl IpSender {
 pub(super) struct IpTransports(Vec<IpTransport>);
 
 impl IpTransports {
+    /// Returns all sockets, including the copies bound with `SO_REUSEPORT`
     pub(super) fn iter(&self) -> impl Iterator<Item = &IpTransport> {
         self.0.iter()
     }
 
+    /// Returns one socket per transport, without the copies
+    pub(super) fn primaries(&self) -> impl Iterator<Item = &IpTransport> {
+        self.0.iter().filter(|t| !t.is_copy)
+    }
+
+    /// Binds the transports, each with `sockets_per_transport` sockets
     pub(super) fn bind(
         configs: impl Iterator<Item = Config>,
+        sockets_per_transport: NonZeroUsize,
         metrics: &EndpointMetrics,
     ) -> io::Result<Self> {
         let mut has_v4_default = false;
@@ -369,8 +442,8 @@ impl IpTransports {
         let mut transports = Vec::new();
 
         for config in configs {
-            match IpTransport::bind(config, metrics.socket.clone()) {
-                Ok(transport) => {
+            match IpTransport::bind_all(config, sockets_per_transport, &metrics.socket) {
+                Ok(sockets) => {
                     if config.is_default() {
                         let has_default = if config.is_ipv4() {
                             &mut has_v4_default
@@ -384,7 +457,7 @@ impl IpTransports {
                         }
                         *has_default = true;
                     }
-                    transports.push(transport);
+                    transports.extend(sockets);
                 }
                 Err(err) => {
                     if config.is_required() {
@@ -404,19 +477,29 @@ impl IpTransports {
 /// Per address family, the first transport in prefix order that is valid for the source and
 /// destination wins, then the default transport. See [`Config::is_valid_send_addr`] and
 /// [`Config::is_valid_default_addr`].
+///
+/// A transport bound several times with `SO_REUSEPORT` has one socket id per socket. Its
+/// destinations are spread over them by a hash of the destination, so a destination always
+/// uses the same socket.
 #[derive(Debug, Clone, Default)]
 pub(super) struct IpSelection {
     /// Sorted by prefix length, longest first
-    v4: Vec<(Config, SocketId)>,
+    v4: Vec<(Config, Vec<SocketId>)>,
     /// Sorted by prefix length, longest first
-    v6: Vec<(Config, SocketId)>,
+    v6: Vec<(Config, Vec<SocketId>)>,
 }
 
 impl IpSelection {
     pub(super) fn new(transports: impl IntoIterator<Item = (Config, SocketId)>) -> Self {
-        let (mut v4, mut v6): (Vec<_>, Vec<_>) = transports
-            .into_iter()
-            .partition(|(config, _)| config.is_ipv4());
+        let mut groups: Vec<(Config, Vec<SocketId>)> = Vec::new();
+        for (config, id) in transports {
+            match groups.iter_mut().find(|(c, _)| *c == config) {
+                Some((_, ids)) => ids.push(id),
+                None => groups.push((config, vec![id])),
+            }
+        }
+        let (mut v4, mut v6): (Vec<_>, Vec<_>) =
+            groups.into_iter().partition(|(config, _)| config.is_ipv4());
         v4.sort_by_key(|(config, _)| std::cmp::Reverse(config.prefix_len()));
         v6.sort_by_key(|(config, _)| std::cmp::Reverse(config.prefix_len()));
         Self { v4, v6 }
@@ -437,15 +520,22 @@ impl IpSelection {
             SocketAddr::V4(_) => &self.v4,
             SocketAddr::V6(_) => &self.v6,
         };
-        transports
+        let (_, ids) = transports
             .iter()
             .find(|(config, _)| config.is_valid_send_addr(src, dst))
             .or_else(|| {
                 transports
                     .iter()
                     .find(|(config, _)| config.is_valid_default_addr(src, dst))
-            })
-            .map(|(_, id)| *id)
+            })?;
+        match ids.as_slice() {
+            [id] => Some(*id),
+            ids => {
+                let hash = std::hash::BuildHasherDefault::<std::hash::DefaultHasher>::default()
+                    .hash_one(dst);
+                Some(ids[hash as usize % ids.len()])
+            }
+        }
     }
 }
 
@@ -501,10 +591,47 @@ mod tests {
             },
         ];
 
-        let transports = IpTransports::bind(config.into_iter(), &metrics)?;
+        let transports = IpTransports::bind(config.into_iter(), NonZeroUsize::MIN, &metrics)?;
         let expected = if has_ipv6 { 6 } else { 3 };
         assert_eq!(transports.iter().count(), expected);
         Ok(())
+    }
+
+    /// Copies bind the address of the first socket, and only the first is a primary
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[tokio::test]
+    async fn bind_copies() -> n0_error::Result {
+        let config = Config::V4 {
+            ip_net: "127.0.0.1/8".parse().unwrap(),
+            port: 0,
+            is_required: true,
+            is_default: true,
+        };
+        let metrics = EndpointMetrics::default();
+        let transports = IpTransports::bind([config].into_iter(), 3.try_into().unwrap(), &metrics)?;
+        let addrs: Vec<_> = transports.iter().map(|t| t.local_addr.get()).collect();
+        assert_eq!(addrs.len(), 3);
+        assert_ne!(addrs[0].port(), 0);
+        assert!(addrs.iter().all(|addr| *addr == addrs[0]));
+        assert_eq!(transports.primaries().count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn ip_selection_spreads_copies() {
+        let config = Config::V4 {
+            ip_net: "0.0.0.0/0".parse().unwrap(),
+            port: 0,
+            is_required: true,
+            is_default: true,
+        };
+        let ids: Vec<SocketId> = (0..3).map(|_| SocketId::new()).collect();
+        let selection = IpSelection::new(ids.iter().map(|id| (config, *id)));
+        let select = |port: u16| selection.select(SocketAddr::from(([10, 0, 0, 1], port)), None);
+        let picked: std::collections::HashSet<_> = (1..100).filter_map(select).collect();
+        assert_eq!(picked.len(), ids.len());
+        // A destination always gets the same socket.
+        assert!((1..100).all(|port| select(port) == select(port)));
     }
 
     #[test]

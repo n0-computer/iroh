@@ -163,6 +163,10 @@ pub(crate) struct Options {
     /// The configuration for the different transports.
     pub(crate) transports: Vec<TransportConfig>,
 
+    /// The number of sockets every IP transport binds.
+    #[cfg(not(wasm_browser))]
+    pub(crate) sockets_per_ip_transport: std::num::NonZeroUsize,
+
     /// Secret key for this endpoint.
     pub(crate) secret_key: SecretKey,
 
@@ -876,6 +880,8 @@ impl EndpointInner {
         let Options {
             secret_key,
             transports: transport_configs,
+            #[cfg(not(wasm_browser))]
+            sockets_per_ip_transport,
             address_lookup_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -936,6 +942,8 @@ impl EndpointInner {
 
         let (transports, transport_recvs) = Transports::bind(
             &transport_configs,
+            #[cfg(not(wasm_browser))]
+            sockets_per_ip_transport,
             relay_actor_config,
             &metrics,
             shutdown_token.child_token(),
@@ -2181,6 +2189,7 @@ mod tests {
                 TransportConfig::default_ipv4(),
                 TransportConfig::default_ipv6(),
             ],
+            sockets_per_ip_transport: std::num::NonZeroUsize::MIN,
             secret_key,
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
@@ -2598,6 +2607,7 @@ mod tests {
                 TransportConfig::default_ipv4(),
                 TransportConfig::default_ipv6(),
             ],
+            sockets_per_ip_transport: std::num::NonZeroUsize::MIN,
             secret_key: secret_key.clone(),
             address_lookup_user_data: None,
             dns_resolver,

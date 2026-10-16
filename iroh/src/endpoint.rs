@@ -11,6 +11,8 @@
 //!
 //! [module docs]: crate
 
+#[cfg(not(wasm_browser))]
+use std::num::NonZeroUsize;
 use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 
 #[cfg(not(wasm_browser))]
@@ -143,6 +145,8 @@ pub struct Builder {
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     transports: Vec<TransportConfig>,
+    #[cfg(not(wasm_browser))]
+    sockets_per_ip_transport: NonZeroUsize,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
     path_selector: Arc<dyn PathSelector>,
@@ -212,6 +216,8 @@ impl Builder {
             dns_resolver: None,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
+            #[cfg(not(wasm_browser))]
+            sockets_per_ip_transport: NonZeroUsize::MIN,
             hooks: Default::default(),
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
@@ -270,6 +276,8 @@ impl Builder {
 
         let sock_opts = socket::Options {
             transports: self.transports,
+            #[cfg(not(wasm_browser))]
+            sockets_per_ip_transport: self.sockets_per_ip_transport,
             secret_key,
             address_lookup_user_data: self.address_lookup_user_data,
             proxy_url: self.proxy_url,
@@ -508,6 +516,28 @@ impl Builder {
     pub fn clear_ip_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Ip { .. }));
+        self
+    }
+
+    /// Binds every IP transport `sockets` times, sharing its address with `SO_REUSEPORT`.
+    ///
+    /// The kernel spreads incoming flows over the sockets by a hash of their source and
+    /// destination addresses, and each socket is received from on its own task. This lets a
+    /// server with many peers receive in parallel. A single connection does not gain, since
+    /// all its datagrams arrive on the same socket. Outgoing datagrams are spread over the
+    /// sockets by destination.
+    ///
+    /// This only has an effect on Linux and Android. Other systems either lack
+    /// `SO_REUSEPORT` or deliver all datagrams of an address to one socket, so there every IP
+    /// transport binds a single socket.
+    ///
+    /// Note that with `SO_REUSEPORT`, other processes of the same user can bind the same
+    /// address and receive part of the endpoint's traffic.
+    ///
+    /// Defaults to `1`.
+    #[cfg(not(wasm_browser))]
+    pub fn sockets_per_ip_transport(mut self, sockets: NonZeroUsize) -> Self {
+        self.sockets_per_ip_transport = sockets;
         self
     }
 
@@ -3482,6 +3512,71 @@ mod tests {
         assert_eq!(bound_sockets.len(), 1);
         assert_eq!(bound_sockets[0].ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
         ep.close().await;
+        Ok(())
+    }
+
+    /// Several sockets per IP transport share one address and carry many connections
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[tokio::test]
+    #[traced_test]
+    async fn test_sockets_per_ip_transport() -> Result {
+        let server = Endpoint::builder(presets::Minimal)
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
+            .sockets_per_ip_transport(4.try_into().unwrap())
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        // The copies do not show up as extra addresses.
+        let bound_sockets = server.bound_sockets();
+        assert_eq!(bound_sockets.len(), 1);
+        let server_addr =
+            EndpointAddr::from_parts(server.id(), [TransportAddr::Ip(bound_sockets[0])]);
+
+        let accept = tokio::spawn({
+            let server = server.clone();
+            async move {
+                while let Some(incoming) = server.accept().await {
+                    let conn = incoming.await.anyerr()?;
+                    tokio::spawn(async move {
+                        let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+                        let msg = recv.read_to_end(100).await.anyerr()?;
+                        send.write_all(&msg).await.anyerr()?;
+                        send.finish().anyerr()?;
+                        conn.closed().await;
+                        n0_error::Ok(())
+                    });
+                }
+                n0_error::Ok(())
+            }
+        });
+
+        // Clients on different ports, which the kernel hashes to different sockets.
+        let mut clients = tokio::task::JoinSet::new();
+        for i in 0..8u8 {
+            let server_addr = server_addr.clone();
+            clients.spawn(async move {
+                let ep = Endpoint::builder(presets::Minimal)
+                    .clear_ip_transports()
+                    .bind_addr((Ipv4Addr::LOCALHOST, 0))?
+                    .bind()
+                    .await?;
+                let conn = ep.connect(server_addr, TEST_ALPN).await?;
+                let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+                send.write_all(&[i; 10]).await.anyerr()?;
+                send.finish().anyerr()?;
+                assert_eq!(recv.read_to_end(100).await.anyerr()?, [i; 10]);
+                conn.close(0u32.into(), b"done");
+                ep.close().await;
+                n0_error::Ok(())
+            });
+        }
+        while let Some(res) = clients.join_next().await {
+            res.anyerr()??;
+        }
+
+        server.close().await;
+        accept.await.anyerr()??;
         Ok(())
     }
 

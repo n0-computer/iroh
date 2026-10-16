@@ -86,6 +86,10 @@ tokio = { version = "1", features = [
     "io-std",
 ] }
 
+# SO_REUSEPORT for `Builder::sockets_per_ip_transport`
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+socket2 = { version = "0.6", features = ["all"] }
+
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasm-bindgen-futures = "0.4"

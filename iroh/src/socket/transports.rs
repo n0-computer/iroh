@@ -277,9 +277,13 @@ impl TransportConfig {
 impl Transports {
     /// Binds the transports.
     ///
+    /// Every IP transport binds `sockets_per_ip_transport` sockets, see
+    /// [`crate::endpoint::Builder::sockets_per_ip_transport`].
+    ///
     /// Returns the shared half and the receive half of every transport.
     pub(crate) fn bind(
         configs: &[TransportConfig],
+        #[cfg(not(wasm_browser))] sockets_per_ip_transport: std::num::NonZeroUsize,
         relay_actor_config: RelayActorConfig,
         metrics: &EndpointMetrics,
         shutdown_token: CancellationToken,
@@ -315,7 +319,7 @@ impl Transports {
         let mut recvs = Vec::new();
 
         #[cfg(not(wasm_browser))]
-        let ip = IpTransports::bind(ip_configs.into_iter(), metrics)?;
+        let ip = IpTransports::bind(ip_configs.into_iter(), sockets_per_ip_transport, metrics)?;
         #[cfg(not(wasm_browser))]
         recvs.extend(ip.iter().cloned().map(TransportReceiver::Ip));
 
@@ -368,7 +372,7 @@ impl Transports {
     #[cfg(not(wasm_browser))]
     /// Watch for all currently known local addresses, including IP based transports.
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
-        let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
+        let ips = n0_watcher::Join::new(self.ip.primaries().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
         let custom = n0_watcher::Join::new(
             self.custom
@@ -409,7 +413,7 @@ impl Transports {
     /// Returns the bound addresses for IP based transports
     #[cfg(not(wasm_browser))]
     pub(crate) fn ip_bind_addrs(&self) -> Vec<SocketAddr> {
-        self.ip.iter().map(|t| t.bind_addr()).collect()
+        self.ip.primaries().map(|t| t.bind_addr()).collect()
     }
 
     /// Handles potential changes to the underlying network conditions.
@@ -962,7 +966,7 @@ impl NoqRouter {
             TransportReceiver::Ip(t) => self
                 .ip_transports
                 .iter()
-                .find(|(_, ip)| ip.bind_addr() == t.bind_addr())
+                .find(|(_, ip)| ip.is_same(t))
                 .map(|(id, _)| *id)
                 .expect("every IP transport has an id"),
             TransportReceiver::Relay(_) => self.relay,

@@ -25,6 +25,7 @@ use std::{
     fmt,
     fs::File,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     str::FromStr,
     time::{Duration, Instant},
@@ -330,6 +331,12 @@ struct EndpointArgs {
     /// Disable all default bind addresses.
     #[clap(long)]
     no_default_bind: bool,
+    /// Bind every IP socket this many times with SO_REUSEPORT (Linux and Android only).
+    ///
+    /// The kernel spreads incoming connections over the sockets, so a provider with many
+    /// peers receives in parallel. A single connection does not gain.
+    #[clap(long, default_value_t = NonZeroUsize::MIN)]
+    sockets: NonZeroUsize,
     /// Receive window size.
     ///
     /// This controls the maximum amount of data that may be inflight for any stream in the connection.
@@ -559,6 +566,8 @@ impl EndpointArgs {
             builder = builder
                 .bind_addr_with_opts(addr, BindOpts::default().set_prefix_len(prefix_len))?;
         }
+
+        builder = builder.sockets_per_ip_transport(self.sockets);
 
         let mut cfg = QuicTransportConfig::builder();
 
