@@ -42,10 +42,14 @@ async fn dispatch(req: Request<Incoming>, service: RelayService) -> Response<Byt
             .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(Box::new(Full::new(Bytes::new())) as BytesBody)
             .expect("valid response"),
-        (&Method::GET, RELAY_PATH) => RelayServiceWithNotify::new(service, Arc::new(Notify::new()))
-            .call(req)
-            .await
-            .expect("RelayServiceWithNotify::call returns Ok"),
+        (&Method::GET, RELAY_PATH) => RelayServiceWithNotify::with_timeout(
+            service,
+            Arc::new(Notify::new()),
+            Duration::from_secs(30),
+        )
+        .call(req)
+        .await
+        .expect("RelayServiceWithNotify::call returns Ok"),
         _ => Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Box::new(Full::new("not found".into())) as BytesBody)
