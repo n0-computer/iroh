@@ -320,6 +320,14 @@ impl ShutdownState {
     fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
+
+    /// Whether the endpoint is drained and its actors are stopping.
+    ///
+    /// The actors of the transports stop, and their queues close, before [`Self::is_closed`]
+    /// is set.
+    fn is_drained(&self) -> bool {
+        self.at_endpoint_closed.is_cancelled()
+    }
 }
 
 /// Iroh connectivity layer.
@@ -405,6 +413,11 @@ impl Socket {
     /// Whether [`crate::Endpoint::close`] has been called.
     fn is_closing(&self) -> bool {
         self.shutdown.is_closing()
+    }
+
+    /// Whether the endpoint is drained and its actors are stopping.
+    pub(crate) fn is_drained(&self) -> bool {
+        self.shutdown.is_drained()
     }
 
     /// Returns a future that resolves once endpoint shutdown has started.
@@ -2909,5 +2922,78 @@ mod tests {
 
         // TODO: could remove the addresses again, send, add it back and see it recover.
         // But we don't have that much private access to the RemoteMap.  This will do for now.
+    }
+
+    // `Socket::close` cancels `at_endpoint_closed` once the drain is done. That stops the relay
+    // actor, which drops the queue of received datagrams. The socket is marked closed only
+    // after the tasks stopped, and until then peers that still send over the relay wake the
+    // driver of noq, which polls a closed queue and logs an error. This holds the socket in
+    // that state, so that the window is not a matter of microseconds.
+    #[tokio::test]
+    #[traced_test]
+    async fn a_drained_socket_does_not_poll_a_closed_relay_queue() -> Result {
+        use crate::{RelayMode, test_utils::run_relay_server};
+
+        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
+        let bind = || {
+            let relay_map = relay_map.clone();
+            async move {
+                let ep = Endpoint::builder(presets::Minimal)
+                    .relay_mode(RelayMode::Custom(relay_map))
+                    .alpns(vec![ALPN.to_vec()])
+                    .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+                    .bind()
+                    .await?;
+                ep.online().await;
+                Ok::<_, n0_error::AnyError>(ep)
+            }
+        };
+        let (closing, sender) = (bind().await?, bind().await?);
+        let accepting = tokio::spawn({
+            let closing = closing.clone();
+            async move {
+                let mut kept = Vec::new();
+                while let Some(incoming) = closing.accept().await {
+                    if let Ok(conn) = incoming.await {
+                        kept.push(conn);
+                    }
+                }
+            }
+        });
+        let full = closing.addr();
+        let relay_only = EndpointAddr::new(full.id).with_addrs(
+            full.relay_urls()
+                .map(|url| TransportAddr::Relay(url.clone()))
+                .collect::<Vec<_>>(),
+        );
+        let conn = sender.connect(relay_only, ALPN).await?;
+        let sending = tokio::spawn(async move {
+            while conn
+                .send_datagram(bytes::Bytes::from_static(&[7; 200]))
+                .is_ok()
+            {
+                time::sleep(Duration::from_millis(1)).await;
+            }
+        });
+        time::sleep(Duration::from_millis(200)).await;
+
+        // The drain is done: the socket does the next step of `close` and stays there.
+        closing
+            .inner()
+            .anyerr()?
+            .shutdown
+            .at_endpoint_closed
+            .cancel();
+        time::sleep(Duration::from_millis(500)).await;
+
+        assert!(
+            !logs_contain("relay_recv_channel closed"),
+            "the relay transport was polled after its queue closed"
+        );
+        sending.abort();
+        accepting.abort();
+        closing.close().await;
+        sender.close().await;
+        Ok(())
     }
 }

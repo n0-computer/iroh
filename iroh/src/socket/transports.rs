@@ -263,7 +263,9 @@ impl Transports {
     ) -> Poll<io::Result<usize>> {
         assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         assert!(bufs.len() <= noq_udp::BATCH_SIZE, "too many buffers");
-        if sock.is_closed() {
+        // After the drain the actors of the transports stop and their queues close, but the
+        // socket is marked closed only later. Nothing is left to receive for the endpoint.
+        if sock.is_closed() || sock.is_drained() {
             return Poll::Pending;
         }
 
