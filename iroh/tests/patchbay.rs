@@ -45,6 +45,8 @@ use crate::util::is_relayed;
 mod degrade;
 #[path = "patchbay/nat.rs"]
 mod nat;
+#[path = "patchbay/network-switch-no-wan.rs"]
+mod network_switch_no_wan;
 #[path = "patchbay/relay.rs"]
 mod relay;
 #[path = "patchbay/switch-uplink.rs"]
