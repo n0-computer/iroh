@@ -8,7 +8,7 @@ mod imp {
 
     use url::Url;
 
-    use crate::net_report::{NetReportConfig, QuicConfig, probes::Probe};
+    use crate::net_report::{NetReportConfig, QuicConfig, nat64::Nat64State, probes::Probe};
 
     /// Options for running probes
     ///
@@ -29,6 +29,8 @@ mod imp {
         pub(crate) proxy_url: Option<Url>,
         /// User-facing configuration.
         pub(crate) user_config: NetReportConfig,
+        /// NAT64 translation state shared with the IP transports.
+        pub(crate) nat64: Nat64State,
     }
 
     impl Options {
@@ -38,7 +40,14 @@ mod imp {
                 tls_config,
                 proxy_url: None,
                 user_config: NetReportConfig::default(),
+                nat64: Nat64State::default(),
             }
+        }
+
+        /// Sets the NAT64 state shared with the IP transports.
+        pub(crate) fn nat64(mut self, nat64: Nat64State) -> Self {
+            self.nat64 = nat64;
+            self
         }
         /// Enable quic probes
         pub(crate) fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {

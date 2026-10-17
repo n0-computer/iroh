@@ -14,7 +14,10 @@ use pin_project::pin_project;
 use tracing::{debug, info, trace};
 
 use super::{RecvInfo, Transmit};
-use crate::metrics::{EndpointMetrics, SocketMetrics};
+use crate::{
+    metrics::{EndpointMetrics, SocketMetrics},
+    net_report::nat64::Nat64State,
+};
 
 #[derive(Debug)]
 pub(crate) struct IpTransport {
@@ -22,6 +25,7 @@ pub(crate) struct IpTransport {
     socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
     metrics: Arc<SocketMetrics>,
+    nat64: Nat64State,
 }
 
 impl std::fmt::Display for IpTransport {
@@ -168,7 +172,11 @@ impl From<Config> for SocketAddr {
 }
 
 impl IpTransport {
-    pub(crate) fn bind(config: Config, metrics: Arc<SocketMetrics>) -> io::Result<Self> {
+    pub(crate) fn bind(
+        config: Config,
+        metrics: Arc<SocketMetrics>,
+        nat64: Nat64State,
+    ) -> io::Result<Self> {
         let addr: SocketAddr = config.into();
         debug!(?addr, "binding");
         let socket = netwatch::UdpSocket::bind_full(addr).inspect_err(|err| {
@@ -185,6 +193,7 @@ impl IpTransport {
             socket: Arc::new(socket),
             local_addr,
             metrics,
+            nat64,
         })
     }
 
@@ -208,6 +217,13 @@ impl IpTransport {
                 for i in 0..n {
                     let meta = &mut metas[i];
                     let recv_info = &mut recv_infos[i];
+                    // Datagrams that came through NAT64 are reported as coming from the
+                    // embedded IPv4 address, matching the address we sent to.
+                    if let SocketAddr::V6(src) = meta.addr
+                        && let Some(src) = self.nat64.untranslate_src(src)
+                    {
+                        meta.addr = SocketAddr::V4(src);
+                    }
                     if meta.addr.is_ipv4() {
                         // The AsyncUdpSocket is an AF_INET6 socket and needs to show this
                         // as coming from an IPv4-mapped IPv6 addresses, since Noq will
@@ -362,9 +378,14 @@ pub(super) struct IpTransportsSender {
     /// Stored sorted by prefix len
     v6: Vec<IpSender>,
     default_v6_index: Option<usize>,
+    nat64: Nat64State,
 }
 
 impl IpTransportsSender {
+    pub(super) fn nat64(&self) -> &Nat64State {
+        &self.nat64
+    }
+
     pub(super) fn v4_iter_mut(&mut self) -> impl Iterator<Item = &mut IpSender> {
         self.v4.iter_mut()
     }
@@ -394,6 +415,7 @@ pub(super) struct IpTransports {
     default_v4_index: Option<usize>,
     v6: Vec<IpTransport>,
     default_v6_index: Option<usize>,
+    nat64: Nat64State,
 }
 
 impl IpTransports {
@@ -406,7 +428,13 @@ impl IpTransports {
             default_v4_index: self.default_v4_index,
             v6: ip_v6,
             default_v6_index: self.default_v6_index,
+            nat64: self.nat64.clone(),
         }
+    }
+
+    /// The NAT64 state shared by these transports, to be driven by net_report.
+    pub(super) fn nat64(&self) -> &Nat64State {
+        &self.nat64
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = &IpTransport> {
@@ -417,6 +445,7 @@ impl IpTransports {
         configs: impl Iterator<Item = Config>,
         metrics: &EndpointMetrics,
     ) -> io::Result<Self> {
+        let nat64 = Nat64State::default();
         let mut has_v4_default = false;
         let mut ip_v4 = Vec::new();
 
@@ -424,7 +453,7 @@ impl IpTransports {
         let mut ip_v6 = Vec::new();
 
         for config in configs {
-            match IpTransport::bind(config, metrics.socket.clone()) {
+            match IpTransport::bind(config, metrics.socket.clone(), nat64.clone()) {
                 Ok(transport) => {
                     if config.is_ipv4() {
                         if config.is_default() {
@@ -469,6 +498,7 @@ impl IpTransports {
             default_v4_index,
             v6: ip_v6,
             default_v6_index,
+            nat64,
         })
     }
 

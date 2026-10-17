@@ -366,6 +366,12 @@ impl Transports {
         }
     }
 
+    /// The NAT64 translation state used by the IP transports.
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn nat64_state(&self) -> crate::net_report::nat64::Nat64State {
+        self.ip.nat64().clone()
+    }
+
     /// Returns a list of all currently known local addresses.
     ///
     /// For IP based transports this is the [`SocketAddr`] of the socket,
@@ -978,7 +984,25 @@ impl TransportsSender {
                 remote: dst_addr,
                 local: src,
             } => match dst_addr {
-                SocketAddr::V4(_) => {
+                SocketAddr::V4(dst_v4) => {
+                    // On an IPv6-only network with NAT64, IPv4 destinations are reached by
+                    // sending to their synthesized IPv6 address from an IPv6 socket.
+                    if let Some(dst_v6) = self.ip.nat64().translate_dst(*dst_v4) {
+                        let dst_v6 = SocketAddr::V6(dst_v6);
+                        let src_v6 = src.filter(|src| src.is_ipv6());
+                        if let Some(sender) = self
+                            .ip
+                            .v6_iter_mut()
+                            .find(|s| s.is_valid_send_addr(src_v6, &dst_v6))
+                        {
+                            return Pin::new(sender).poll_send(cx, dst_v6, src_v6, transmit);
+                        }
+                        if let Some(sender) = self.ip.v6_default_mut()
+                            && sender.is_valid_default_addr(src_v6, &dst_v6)
+                        {
+                            return Pin::new(sender).poll_send(cx, dst_v6, src_v6, transmit);
+                        }
+                    }
                     if let Some(sender) = self
                         .ip
                         .v4_iter_mut()
