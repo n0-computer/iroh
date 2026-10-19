@@ -31,26 +31,35 @@ type RelayAddrWatcher =
 
 #[derive(Debug)]
 pub(crate) struct RelayTransport {
-    /// Queue to receive datagrams from relays for [`noq::AsyncUdpSocket::poll_recv`].
-    relay_datagram_recv_queue: mpsc::Receiver<RelayRecvDatagram>,
     /// Channel on which to send datagrams via a relay server.
     relay_datagram_send_channel: mpsc::Sender<RelaySendItem>,
-    /// A datagram from the last poll_recv that didn't quite fit our buffers.
-    pending_item: Option<RelayRecvDatagram>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: HomeRelayWatch,
     my_endpoint_id: EndpointId,
 }
 
-impl std::fmt::Display for RelayTransport {
+/// The receive half of a [`RelayTransport`], driven by its own noq socket task.
+#[derive(Debug)]
+pub(crate) struct RelayReceiver {
+    /// Queue to receive datagrams from relays for [`noq::AsyncUdpSocket::poll_recv`].
+    relay_datagram_recv_queue: mpsc::Receiver<RelayRecvDatagram>,
+    /// A datagram from the last poll_recv that didn't quite fit our buffers.
+    pending_item: Option<RelayRecvDatagram>,
+}
+
+impl std::fmt::Display for RelayReceiver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "RelayTransport")
     }
 }
 
 impl RelayTransport {
-    pub(crate) fn new(config: RelayActorConfig, cancel_token: CancellationToken) -> Self {
+    /// Starts the relay actor and returns the transport and its receive half.
+    pub(crate) fn new(
+        config: RelayActorConfig,
+        cancel_token: CancellationToken,
+    ) -> (Self, RelayReceiver) {
         let (relay_datagram_send_tx, relay_datagram_send_rx) = mpsc::channel(256);
 
         let (relay_datagram_recv_tx, relay_datagram_recv_rx) = mpsc::channel(512);
@@ -71,15 +80,18 @@ impl RelayTransport {
             .instrument(info_span!("relay-actor")),
         ));
 
-        Self {
-            relay_datagram_recv_queue: relay_datagram_recv_rx,
+        let transport = Self {
             relay_datagram_send_channel: relay_datagram_send_tx,
-            pending_item: None,
             actor_sender,
             _actor_handle: actor_handle,
             my_relay,
             my_endpoint_id,
-        }
+        };
+        let recv = RelayReceiver {
+            relay_datagram_recv_queue: relay_datagram_recv_rx,
+            pending_item: None,
+        };
+        (transport, recv)
     }
 
     pub(crate) fn create_sender(&self) -> RelaySender {
@@ -87,7 +99,9 @@ impl RelayTransport {
             sender: PollSender::new(self.relay_datagram_send_channel.clone()),
         }
     }
+}
 
+impl RelayReceiver {
     pub(super) fn poll_recv(
         &mut self,
         cx: &mut Context,
@@ -193,7 +207,9 @@ impl RelayTransport {
             Poll::Pending
         }
     }
+}
 
+impl RelayTransport {
     pub(super) fn local_addr_watch(&self) -> RelayAddrWatcher {
         let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
@@ -210,7 +226,9 @@ impl RelayTransport {
             sender: self.actor_sender.clone(),
         }
     }
+}
 
+impl RelayReceiver {
     /// Makes sure we have a pending item stored, if not, it'll poll a new one from the queue.
     ///
     /// Returns a mutable reference to the stored pending item.
@@ -415,7 +433,7 @@ mod tests {
 
     /// Builds a [`RelayTransport`] that never actually dials a relay (its home
     /// relay watcher is left unset), just so we get a real `poll_recv` to exercise.
-    fn test_relay_transport() -> RelayTransport {
+    fn test_relay_transport() -> (RelayTransport, RelayReceiver) {
         let config = RelayActorConfig {
             my_relay: HomeRelayWatch::default(),
             secret_key: SecretKey::from_bytes(&[7u8; 32]),
@@ -433,7 +451,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn progress_is_made_for_large_segment_size_datagram_batch() {
-        let mut transport = test_relay_transport();
+        let (_transport, mut recv) = test_relay_transport();
 
         let url = staging::default_na_east_relay().url;
         let src = EndpointId::from_bytes(&[3u8; 32]).unwrap();
@@ -445,7 +463,7 @@ mod tests {
             contents: Bytes::from(vec![0u8; 4000]),
         };
 
-        transport.pending_item = Some(RelayRecvDatagram {
+        recv.pending_item = Some(RelayRecvDatagram {
             url,
             src,
             datagrams,
@@ -463,11 +481,11 @@ mod tests {
         // progress does not need to be immediate but within a reasonable number of iterations
         for _ in 0..10 {
             let mut bufs = [io::IoSliceMut::new(&mut storage)];
-            match transport.poll_recv(&mut cx, &mut bufs, &mut metas, &mut recv_infos) {
+            match recv.poll_recv(&mut cx, &mut bufs, &mut metas, &mut recv_infos) {
                 Poll::Ready(Ok(_)) | Poll::Pending => {}
                 Poll::Ready(Err(err)) => panic!("poll_recv failed: {err}"),
             }
-            if transport.pending_item.is_none() {
+            if recv.pending_item.is_none() {
                 progressed = true;
                 break;
             }
