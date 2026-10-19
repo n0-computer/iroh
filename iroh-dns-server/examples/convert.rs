@@ -1,16 +1,17 @@
 use std::str::FromStr;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use iroh::EndpointId;
 use n0_error::{Result, StdResultExt};
 
 #[derive(Debug, Parser)]
+#[command(version, about)]
 struct Cli {
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Subcommand)]
 enum Command {
     EndpointToPkarr { endpoint_id: String },
     PkarrToEndpoint { z32_pubkey: String },

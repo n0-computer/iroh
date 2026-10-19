@@ -190,8 +190,8 @@ pub(crate) mod dns_server {
         net::{Ipv4Addr, SocketAddr},
     };
 
-    use hickory_resolver::proto::{op::Message, serialize::binary::BinDecodable};
     use n0_future::future::Boxed as BoxFuture;
+    use simple_dns::{Packet, PacketFlag};
     use tokio::{net::UdpSocket, sync::oneshot};
     use tracing::{debug, error, warn};
 
@@ -201,20 +201,23 @@ pub(crate) mod dns_server {
     pub(crate) trait QueryHandler: Send + Sync + 'static {
         fn resolve(
             &self,
-            query: &Message,
-            reply: &mut Message,
+            query: &Packet<'_>,
+            reply: &mut Packet<'static>,
         ) -> impl Future<Output = std::io::Result<()>> + Send;
     }
 
     pub(crate) type QueryHandlerFunction = Box<
-        dyn Fn(&Message, &mut Message) -> BoxFuture<std::io::Result<()>> + Send + Sync + 'static,
+        dyn Fn(&Packet<'_>, &mut Packet<'static>) -> BoxFuture<std::io::Result<()>>
+            + Send
+            + Sync
+            + 'static,
     >;
 
     impl QueryHandler for QueryHandlerFunction {
         fn resolve(
             &self,
-            query: &Message,
-            reply: &mut Message,
+            query: &Packet<'_>,
+            reply: &mut Packet<'static>,
         ) -> impl Future<Output = std::io::Result<()>> + Send {
             (self)(query, reply)
         }
@@ -268,12 +271,20 @@ pub(crate) mod dns_server {
             from: SocketAddr,
             buf: &[u8],
         ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-            let packet = Message::from_bytes(buf)?;
-            debug!(queries = ?packet.queries, %from, "received query");
-            let mut reply = packet.clone().into_response();
+            let packet = Packet::parse(buf).map_err(std::io::Error::other)?;
+            debug!(questions = ?packet.questions, %from, "received query");
+            let mut reply = Packet::new_reply(packet.id());
+            reply.set_flags(PacketFlag::RECURSION_DESIRED | PacketFlag::RECURSION_AVAILABLE);
+            // Echo the question section, as a real resolver does. The client
+            // validates that the response question matches its query.
+            reply.questions = packet
+                .questions
+                .iter()
+                .map(|q| q.clone().into_owned())
+                .collect();
             self.resolver.resolve(&packet, &mut reply).await?;
             debug!(?reply, %from, "send reply");
-            let buf = reply.to_vec()?;
+            let buf = reply.build_bytes_vec().map_err(std::io::Error::other)?;
             let len = self.socket.send_to(&buf, from).await?;
             assert_eq!(len, buf.len(), "failed to send complete packet");
             Ok(())
@@ -369,6 +380,10 @@ pub(crate) mod pkarr_dns_state {
 
     use iroh_base::EndpointId;
     use iroh_dns::{IROH_TXT_NAME, endpoint_info::EndpointInfo, pkarr::SignedPacket};
+    use simple_dns::{
+        CLASS, Name, Packet, ResourceRecord,
+        rdata::{RData, TXT},
+    };
     use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;
@@ -405,7 +420,11 @@ pub(crate) mod pkarr_dns_state {
                     .as_ref()
                     .and_then(|p| EndpointInfo::from_pkarr_signed_packet(p).ok());
                 debug!("got info {:#?}", endpoint_info);
-                p.is_none()
+                // Wait until we have endpoint info with actual addressing data,
+                // not just an empty initial publish.
+                endpoint_info
+                    .as_ref()
+                    .is_none_or(|info| info.data.addrs().next().is_none())
             }) {
                 tokio::select! {
                     _ = &mut timeout => return Err(std::io::Error::other("timeout")),
@@ -450,12 +469,12 @@ pub(crate) mod pkarr_dns_state {
 
         pub(crate) fn resolve_dns(
             &self,
-            query: &hickory_resolver::proto::op::Message,
-            reply: &mut hickory_resolver::proto::op::Message,
+            query: &Packet<'_>,
+            reply: &mut Packet<'static>,
             ttl: u32,
         ) -> std::io::Result<()> {
-            for query in &query.queries {
-                let domain_name = query.name().to_string();
+            for question in &query.questions {
+                let domain_name = question.qname.to_string();
                 let Some(endpoint_id) = endpoint_id_from_domain_name(&domain_name) else {
                     continue;
                 };
@@ -465,9 +484,9 @@ pub(crate) mod pkarr_dns_state {
                         let endpoint_info = EndpointInfo::from_pkarr_signed_packet(packet)
                             .map_err(std::io::Error::other)?;
                         for record in
-                            endpoint_info_to_hickory_records(&endpoint_info, &self.origin, ttl)
+                            endpoint_info_to_dns_records(&endpoint_info, &self.origin, ttl)
                         {
-                            reply.add_answer(record);
+                            reply.answers.push(record);
                         }
                     }
                     Ok::<_, std::io::Error>(())
@@ -480,8 +499,8 @@ pub(crate) mod pkarr_dns_state {
     impl QueryHandler for State {
         fn resolve(
             &self,
-            query: &hickory_resolver::proto::op::Message,
-            reply: &mut hickory_resolver::proto::op::Message,
+            query: &Packet<'_>,
+            reply: &mut Packet<'static>,
         ) -> impl Future<Output = std::io::Result<()>> + Send {
             const TTL: u32 = 30;
             let res = self.resolve_dns(query, reply, TTL);
@@ -507,32 +526,36 @@ pub(crate) mod pkarr_dns_state {
         Some(endpoint_id)
     }
 
-    /// Converts a [`EndpointInfo`]into a [`hickory_resolver::proto::rr::Record`] DNS record.
-    fn endpoint_info_to_hickory_records(
+    /// Converts an [`EndpointInfo`] into simple-dns [`ResourceRecord`]s.
+    fn endpoint_info_to_dns_records(
         endpoint_info: &EndpointInfo,
         origin: &str,
         ttl: u32,
-    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static {
+    ) -> Vec<ResourceRecord<'static>> {
         let txt_strings = endpoint_info.to_txt_strings();
-        let records = to_hickory_records(txt_strings, endpoint_info.endpoint_id, origin, ttl);
-        records.collect::<Vec<_>>().into_iter()
+        to_dns_records(txt_strings, endpoint_info.endpoint_id, origin, ttl)
     }
 
-    /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
-    fn to_hickory_records(
+    /// Converts TXT strings to simple-dns [`ResourceRecord`]s.
+    fn to_dns_records(
         txt_strings: Vec<String>,
         endpoint_id: EndpointId,
         origin: &str,
         ttl: u32,
-    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
-        use hickory_resolver::proto::rr;
+    ) -> Vec<ResourceRecord<'static>> {
         let name = format!("{IROH_TXT_NAME}.{}.{origin}", endpoint_id.to_z32());
-        let name = rr::Name::from_utf8(name).expect("invalid name");
-        txt_strings.into_iter().map(move |s| {
-            let txt = rr::rdata::TXT::new(vec![s]);
-            let rdata = rr::RData::TXT(txt);
-            rr::Record::from_rdata(name.clone(), ttl, rdata)
-        })
+        let name = Name::new(&name).expect("invalid name").into_owned();
+        txt_strings
+            .into_iter()
+            .map(move |s| {
+                let txt = TXT::new()
+                    .with_string(&s)
+                    .expect("invalid TXT string")
+                    .into_owned();
+                let rdata = RData::TXT(txt);
+                ResourceRecord::new(name.clone(), CLASS::IN, ttl, rdata)
+            })
+            .collect()
     }
 
     #[cfg(test)]

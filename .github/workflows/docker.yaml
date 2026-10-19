@@ -56,12 +56,15 @@ jobs:
     build_and_publish:
       timeout-minutes: 30
       name: Docker
-      runs-on: [self-hosted, linux, X64]
+      runs-on: blacksmith-4vcpu-ubuntu-2204
       steps:
         - name: Checkout
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
           with:
             persist-credentials: false
+
+        - name: Set up QEMU
+          uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
         - name: Set up Docker Buildx
           uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -71,7 +74,7 @@ jobs:
           with:
             username: ${{ secrets.DOCKERHUB_USERNAME }}
             password: ${{ secrets.DOCKERHUB_TOKEN }}
-        
+
         - name: Prep dirs
           run: |
             mkdir -p bins/linux/amd64
@@ -93,7 +96,7 @@ jobs:
 
         - name: Install awscli
           run: sudo ~/awscli/aws/install --update
-    
+
         - name: Set aws credentials
           run: |
               echo "AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}" >> $GITHUB_ENV

@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   pick-runner:
-    uses: "./.github/workflows/pick-runner.yml"
+    uses: "$/.github/workflows/pick-runner.yml"
     with:
       min_free_runners: 3
     secrets:
