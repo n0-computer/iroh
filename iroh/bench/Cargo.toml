@@ -14,7 +14,7 @@ n0-future = "0.3"
 n0-error = "1.0.0"
 noq = "1.3.0"
 rcgen = "0.14"
-rustls = { version = "0.23.33", default-features = false }
+rustls = { version = "0.23.46", default-features = false }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync"] }
 tracing = "0.1"
@@ -35,3 +35,6 @@ fast-apple-datapath = ["iroh/fast-apple-datapath", "noq/fast-apple-datapath"]
 qlog = ["iroh/qlog", "noq/qlog"]
 tls-ring = ["rustls/ring", "iroh/tls-ring"]
 tls-aws-lc-rs = ["rustls/aws-lc-rs", "iroh/tls-aws-lc-rs"]
+
+[lints]
+workspace = true
