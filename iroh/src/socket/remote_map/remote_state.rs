@@ -30,14 +30,14 @@ pub use self::{
     path_watcher::{Path, PathEvent, PathEventStream, PathList, PathListIter, PathListStream},
     remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage},
 };
-use super::{MappedAddrs, SenderFactory, Source};
+use super::{MappedAddrs, Source};
 use crate::{
     address_lookup::{AddressLookupFailed, AddressLookupServices, Item as AddressLookupItem},
     endpoint::DirectAddr,
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
         remote_map::remote_state::path_watcher::PathStateSender,
-        transports::{self, OwnedTransmit},
+        transports::{self, OwnedTransmit, TransportsSender},
     },
 };
 
@@ -127,8 +127,6 @@ struct State {
     mapped_addrs: MappedAddrs,
     /// Address lookup service, cloned from the socket.
     address_lookup: AddressLookupServices,
-    /// Creates the noq senders Initial packets are sent with.
-    sender_factory: SenderFactory,
 
     // Internal state - Noq Connections we are managing.
     //
@@ -185,7 +183,6 @@ impl RemoteStateActor {
         metrics: Arc<SocketMetrics>,
         address_lookup: AddressLookupServices,
         path_selector: Arc<dyn PathSelector>,
-        sender_factory: SenderFactory,
     ) -> Self {
         Self {
             connections: FxHashMap::default(),
@@ -195,7 +192,6 @@ impl RemoteStateActor {
                 local_direct_addrs,
                 mapped_addrs,
                 address_lookup,
-                sender_factory,
                 connections_close: Default::default(),
                 path_events: Default::default(),
                 addr_events: Default::default(),
@@ -361,8 +357,9 @@ impl RemoteStateActor {
         send_tasks: &mut FuturesUnorderedBounded<Boxed<()>>,
     ) {
         match msg {
-            RemoteStateMessage::SendDatagram(transmit) => {
-                self.state.handle_msg_send_datagram(transmit, send_tasks);
+            RemoteStateMessage::SendDatagram(sender, transmit) => {
+                self.state
+                    .handle_msg_send_datagram(sender, transmit, send_tasks);
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx);
@@ -795,6 +792,7 @@ impl State {
     /// Handles [`RemoteStateMessage::SendDatagram`].
     fn handle_msg_send_datagram(
         &mut self,
+        sender: Box<TransportsSender>,
         transmit: OwnedTransmit,
         send_tasks: &mut FuturesUnorderedBounded<Boxed<()>>,
     ) {
@@ -810,7 +808,7 @@ impl State {
             // TODO(Frando): We might want to include a local IP here in the future, if we confidently
             // know that it is the correct one.
             // See https://github.com/n0-computer/iroh/issues/4280.
-            smallvec![self.mapped_addrs.socket_addr(&addr.remote())]
+            smallvec![transports::FourTuple::from_remote(addr.remote())]
         } else {
             trace!(
                 paths = ?self.paths.addrs().collect::<Vec<_>>(),
@@ -837,7 +835,7 @@ impl State {
                 // know that it is the correct one.
                 // See https://github.com/n0-computer/iroh/issues/4280.
                 } else {
-                    targets.push(self.mapped_addrs.socket_addr(addr));
+                    targets.push(transports::FourTuple::from_remote(addr.clone()));
                 }
             }
             // This message is received *before* a connection is added.  So we do
@@ -849,12 +847,11 @@ impl State {
         if targets.is_empty() {
             return;
         }
-        let sender_factory = self.sender_factory.clone();
         let send = Box::pin(
             async move {
                 if time::timeout(
                     DATAGRAM_SEND_TIMEOUT,
-                    send_datagram_to_targets(sender_factory, transmit, targets),
+                    send_datagram_to_targets(sender, transmit, targets),
                 )
                 .await
                 .is_err()
@@ -1145,42 +1142,35 @@ fn update_qnt_candidates(conn: &noq::Connection, direct_addrs: &BTreeSet<SocketA
 }
 
 fn send_datagram<'a>(
-    sender: &'a mut Pin<Box<dyn noq::UdpSender>>,
-    destination: SocketAddr,
+    sender: &'a mut TransportsSender,
+    addr: transports::FourTuple,
     owned_transmit: OwnedTransmit,
 ) -> impl Future<Output = n0_error::Result<()>> + 'a {
     std::future::poll_fn(move |cx| {
-        let transmit = noq_udp::Transmit {
-            destination,
+        let transmit = transports::Transmit {
             ecn: owned_transmit.ecn,
             contents: owned_transmit.contents.as_ref(),
             segment_size: owned_transmit.segment_size,
-            src_ip: None,
         };
 
-        sender
-            .as_mut()
-            .poll_send(&transmit, cx)
-            .map(|res| res.with_context(|_| format!("failed to send datagram to {destination}")))
+        Pin::new(&mut *sender)
+            .poll_send(cx, &addr, &transmit)
+            .map(|res| res.with_context(|_| format!("failed to send datagram to {:?}", addr)))
     })
 }
 
-/// Sends `transmit` to every target, each through its own noq sender.
-///
-/// One sender per target, because a sender parks on one blocked socket and the other
-/// targets must not wait for it.
 async fn send_datagram_to_targets(
-    sender_factory: SenderFactory,
+    sender: Box<TransportsSender>,
     transmit: OwnedTransmit,
-    targets: SmallVec<[SocketAddr; 8]>,
+    targets: SmallVec<[transports::FourTuple; 8]>,
 ) {
     let mut sends = targets
         .into_iter()
         .map(|target| {
-            let mut sender = sender_factory();
+            let mut sender = sender.clone();
             let transmit = transmit.clone();
             async move {
-                if let Err(err) = send_datagram(&mut sender, target, transmit).await {
+                if let Err(err) = send_datagram(&mut sender, target.clone(), transmit).await {
                     debug!(?target, "failed to send datagram: {err:#}");
                 }
             }
@@ -1201,7 +1191,7 @@ pub(crate) enum RemoteStateMessage {
     /// operation with a bunch more copying.  So it should only be used for sending QUIC
     /// Initial packets.
     #[debug("SendDatagram(..)")]
-    SendDatagram(OwnedTransmit),
+    SendDatagram(Box<TransportsSender>, OwnedTransmit),
     /// Adds an active connection to this remote endpoint.
     ///
     /// The actor will downgrade the connection to a [`noq::WeakConnectionHandle`] as soon
@@ -1577,38 +1567,53 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(wasm_browser)))]
 mod tests {
     use super::*;
-    use crate::socket::remote_map::test_support::ChannelSender;
 
     #[tokio::test]
     async fn blocked_relay_does_not_delay_direct_initial() {
-        let (mut sender, mut receiver) = ChannelSender::new(1);
-        let mapped_addrs = MappedAddrs::default();
-        let relay = mapped_addrs.socket_addr(&transports::Addr::Relay(
-            "https://relay.example.invalid".parse().unwrap(),
-            iroh_base::SecretKey::from_bytes(&[1; 32]).public(),
-        ));
-        let direct: SocketAddr = "127.0.0.1:4433".parse().unwrap();
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (mut sender, _relay_receiver) = TransportsSender::with_bounded_relay(
+            1,
+            [transports::IpConfig::V4 {
+                ip_net: "127.0.0.1/8".parse().unwrap(),
+                port: 0,
+                is_required: true,
+                is_default: true,
+            }]
+            .into_iter(),
+        );
+        let relay = transports::FourTuple::Relay {
+            url: "https://relay.example.invalid".parse().unwrap(),
+            endpoint_id: iroh_base::SecretKey::from_bytes(&[1; 32]).public(),
+        };
         let transmit = OwnedTransmit {
             ecn: None,
             contents: bytes::Bytes::from_static(b"initial"),
             segment_size: None,
         };
-        // Fill the relay channel, so the next relay send blocks.
-        let mut first: Pin<Box<dyn noq::UdpSender>> = Box::pin(sender.clone());
-        send_datagram(&mut first, relay, transmit.clone())
+        send_datagram(&mut sender, relay.clone(), transmit.clone())
             .await
             .unwrap();
-        let sends = send_datagram_to_targets(sender.factory(), transmit, smallvec![relay, direct]);
+        let sends = send_datagram_to_targets(
+            Box::new(sender),
+            transmit,
+            smallvec![
+                relay,
+                transports::FourTuple::from_remote(transports::Addr::Ip(
+                    receiver.local_addr().unwrap(),
+                )),
+            ],
+        );
+        let mut buf = [0; 64];
         // The Relay queue stays full while the later Direct target receives its Initial.
         tokio::select! {
             _ = sends => panic!("blocked Relay send unexpectedly completed"),
-            received = time::timeout(Duration::from_secs(1), receiver.direct.recv()) => {
-                assert_eq!(received.expect("Direct send blocked behind Relay"), Some(direct));
+            received = time::timeout(Duration::from_secs(1), receiver.recv(&mut buf)) => {
+                let len = received.expect("Direct send blocked behind Relay").unwrap();
+                assert_eq!(&buf[..len], b"initial");
             }
         }
-        let _ = &mut sender;
     }
 }
