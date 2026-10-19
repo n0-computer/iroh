@@ -11,6 +11,7 @@ use std::{
     sync::Arc,
 };
 
+use ipnet::Ipv6Net;
 use n0_error::{e, stack_error};
 use rand::Rng;
 use rustc_hash::FxHashMap;
@@ -30,6 +31,30 @@ const CUSTOM_MAPPED_SUBNET: [u8; 2] = [0x00, 0x03];
 
 /// The Subnet ID for [`EndpointIdMappedAddr`]: fd15:70a:510b::/64.
 const ENDPOINT_ID_SUBNET: [u8; 2] = [0x00, 0x00];
+
+/// The range of all [`RelayMappedAddr`]s.
+pub(crate) fn relay_mapped_net() -> Ipv6Net {
+    mapped_net(RELAY_MAPPED_SUBNET)
+}
+
+/// The range of all [`CustomMappedAddr`]s.
+pub(crate) fn custom_mapped_net() -> Ipv6Net {
+    mapped_net(CUSTOM_MAPPED_SUBNET)
+}
+
+/// The range of all [`EndpointIdMappedAddr`]s.
+pub(crate) fn endpoint_id_mapped_net() -> Ipv6Net {
+    mapped_net(ENDPOINT_ID_SUBNET)
+}
+
+/// The /64 range of the mapped addresses with `subnet`.
+fn mapped_net(subnet: [u8; 2]) -> Ipv6Net {
+    let mut addr = [0u8; 16];
+    addr[0] = ADDR_PREFIXL;
+    addr[1..6].copy_from_slice(&ADDR_GLOBAL_ID);
+    addr[6..8].copy_from_slice(&subnet);
+    Ipv6Net::new(Ipv6Addr::from(addr), 64).expect("valid prefix length")
+}
 
 /// A default fake addr, using the maximum addr that the internal fake addrs could be using.
 pub(crate) const DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(

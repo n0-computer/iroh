@@ -54,7 +54,7 @@ use tokio::sync::{
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
-use transports::{LocalAddrsWatch, Transport, TransportConfig};
+use transports::{LocalAddrsWatch, TransportConfig};
 use url::Url;
 
 use self::{
@@ -934,7 +934,7 @@ impl EndpointInner {
         let shutdown_state = ShutdownState::default();
         let shutdown_token = shutdown_state.at_endpoint_closed.child_token();
 
-        let transports = Transports::bind(
+        let (transports, transport_recvs) = Transports::bind(
             &transport_configs,
             relay_actor_config,
             &metrics,
@@ -1022,10 +1022,13 @@ impl EndpointInner {
 
         let runtime = Arc::new(Runtime::new(secret_key.public()));
 
-        let endpoint = noq::Endpoint::new_with_abstract_socket(
+        let noq_sockets = transports
+            .noq_sockets(sock.clone(), transport_recvs)
+            .map_err(|err| e!(BindError::CreateQuicEndpoint, err))?;
+        let endpoint = noq::Endpoint::new_with_multiple_sockets(
             endpoint_config,
             Some(server_config),
-            Box::new(Transport::new(sock.clone(), transports)),
+            noq_sockets,
             runtime.clone(),
         )
         .map_err(|err| e!(BindError::CreateQuicEndpoint, err))?;
