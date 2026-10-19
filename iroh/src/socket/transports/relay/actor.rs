@@ -1252,7 +1252,17 @@ impl RelayActor {
                 .set(relay_url.clone(), RelayConnectionState::Connecting);
             self.set_home_relay(relay_url).await;
         } else {
+            info!("no home relay, was {:?}", prev_url);
             self.config.my_relay.clear();
+            // Demote the old home relay so its inactivity timeout can close it.
+            n0_future::join_all(self.active_relays.values().map(|handle| async move {
+                handle
+                    .inbox_addr
+                    .send(ActiveRelayMessage::SetHomeRelay(false))
+                    .await
+                    .ok()
+            }))
+            .await;
         }
     }
 
