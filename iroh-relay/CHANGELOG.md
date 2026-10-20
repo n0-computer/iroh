@@ -2,6 +2,26 @@
 
 All notable changes to iroh-relay will be documented in this file.
 
+## [1.4.0](https://github.com/n0-computer/iroh/compare/v1.3.0..1.4.0) - 2026-10-20
+
+### ⛰️  Features
+
+- *(iroh-relay)* Send `X-Iroh-Endpoint-Id` header and deprecate `X-Iroh-NodeId` ([#4586](https://github.com/n0-computer/iroh/issues/4586)) - ([f953e82](https://github.com/n0-computer/iroh/commit/f953e82581bd4ede8ef09951f49b2f031cea36a7))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Reduce cache startup memory ([#4574](https://github.com/n0-computer/iroh/issues/4574)) - ([dce5173](https://github.com/n0-computer/iroh/commit/dce5173bc43c70441249a784012dbe7a1f5b3afe))
+- *(iroh-relay)* Send correct Proxy-Authorization credentials ([#4591](https://github.com/n0-computer/iroh/issues/4591)) - ([d4490fc](https://github.com/n0-computer/iroh/commit/d4490fcfde8e4dc7260a44a2a982c654748595e2))
+- *(iroh-relay)* Put a timeout on captive portal checks ([#4614](https://github.com/n0-computer/iroh/issues/4614)) - ([2624e32](https://github.com/n0-computer/iroh/commit/2624e3231754a9a6948d4037e1bf536140609941))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update noq dependency - ([d506cb9](https://github.com/n0-computer/iroh/commit/d506cb967599c0d1901becf591e286930a8b48d2))
+
+# Changelog
+
+All notable changes to iroh-relay will be documented in this file.
+
 ## [1.3.0](https://github.com/n0-computer/iroh/compare/v1.2.0..1.3.0) - 2026-09-28
 
 ### ⛰️  Features
