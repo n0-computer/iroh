@@ -8,21 +8,15 @@ pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
 #[cfg(feature = "server")] // only used in the server for now
 pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
 
-/// The path under which the relay accepts relaying connections (over
-/// websockets and a custom upgrade protocol), relative to the relay URL.
+/// The path relaying connections are made on, relative to the relay URL.
 ///
 /// Clients join it onto the relay URL, so a relay served under a path prefix
-/// keeps it: `https://example.com/prefix/` (with its trailing slash) gives
-/// `https://example.com/prefix/relay`. Servers route [`RELAY_ROUTE`].
+/// keeps it: `https://example.com/prefix/` gives `https://example.com/prefix/relay`.
 pub const RELAY_PATH: &str = "relay";
-/// The path under which the relay allows doing latency queries for testing,
-/// relative to the relay URL, as [`RELAY_PATH`]. Servers route
-/// [`RELAY_PROBE_ROUTE`].
+/// The path latency probes are made on, relative to the relay URL.
+///
+/// It is joined onto the relay URL in the same way as [`RELAY_PATH`].
 pub const RELAY_PROBE_PATH: &str = "ping";
-/// The route a relay server serves [`RELAY_PATH`] on.
-pub const RELAY_ROUTE: &str = "/relay";
-/// The route a relay server serves [`RELAY_PROBE_PATH`] on.
-pub const RELAY_PROBE_ROUTE: &str = "/ping";
 
 /// The HTTP header name for relay client authentication
 pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay-client-auth-v1");
@@ -128,7 +122,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paths_join_onto_the_relay_url_and_match_the_routes() {
+    fn paths_join_onto_the_relay_url() {
         let join = |base: &str, path| {
             url::Url::parse(base)
                 .unwrap()
@@ -152,8 +146,6 @@ mod tests {
             join("https://example.com/a/b/", RELAY_PROBE_PATH),
             "https://example.com/a/b/ping"
         );
-        assert_eq!(RELAY_ROUTE, format!("/{RELAY_PATH}"));
-        assert_eq!(RELAY_PROBE_ROUTE, format!("/{RELAY_PROBE_PATH}"));
     }
 
     #[test]
