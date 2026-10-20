@@ -3,6 +3,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 
 use axum_server::{
@@ -55,6 +56,14 @@ impl CertMode {
     }
 }
 
+/// How long a client may take to complete the TLS handshake.
+///
+/// Generous, so that clients on lossy high-latency links still get through.
+#[cfg(not(test))]
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// TLS Certificate Authority acceptor.
 #[derive(Clone)]
 pub(crate) enum TlsAcceptor {
@@ -70,10 +79,22 @@ impl<I: AsyncRead + AsyncWrite + Unpin + Send + 'static, S: Send + 'static> Acce
     type Future = BoxFuture<io::Result<(Self::Stream, Self::Service)>>;
 
     fn accept(&self, stream: I, service: S) -> Self::Future {
-        match self {
+        let accept = match self {
             Self::LetsEncrypt(a) => a.accept(stream, service).boxed(),
             Self::Manual(a) => a.accept(stream, service).boxed(),
+        };
+        // The ACME acceptor has no handshake timeout of its own.
+        async move {
+            tokio::time::timeout(TLS_HANDSHAKE_TIMEOUT, accept)
+                .await
+                .unwrap_or_else(|_| {
+                    Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "TLS handshake timed out",
+                    ))
+                })
         }
+        .boxed()
     }
 }
 
