@@ -259,33 +259,35 @@
 <a href=#259 id=259 data-nosnippet>259</a>            http: <span class="prelude-val">Some</span>(HttpConfig {
 <a href=#260 id=260 data-nosnippet>260</a>                port: <span class="number">8080</span>,
 <a href=#261 id=261 data-nosnippet>261</a>                bind_addr: <span class="prelude-val">None</span>,
-<a href=#262 id=262 data-nosnippet>262</a>            }),
-<a href=#263 id=263 data-nosnippet>263</a>            https: <span class="prelude-val">Some</span>(HttpsConfig {
-<a href=#264 id=264 data-nosnippet>264</a>                port: <span class="number">8443</span>,
-<a href=#265 id=265 data-nosnippet>265</a>                bind_addr: <span class="prelude-val">None</span>,
-<a href=#266 id=266 data-nosnippet>266</a>                domains: <span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()],
-<a href=#267 id=267 data-nosnippet>267</a>                cert_mode: CertMode::SelfSigned,
-<a href=#268 id=268 data-nosnippet>268</a>                letsencrypt_contact: <span class="prelude-val">None</span>,
-<a href=#269 id=269 data-nosnippet>269</a>                letsencrypt_prod: <span class="prelude-val">None</span>,
-<a href=#270 id=270 data-nosnippet>270</a>            }),
-<a href=#271 id=271 data-nosnippet>271</a>            dns: DnsConfig {
-<a href=#272 id=272 data-nosnippet>272</a>                port: <span class="number">5300</span>,
-<a href=#273 id=273 data-nosnippet>273</a>                bind_addr: <span class="prelude-val">None</span>,
-<a href=#274 id=274 data-nosnippet>274</a>                origins: <span class="macro">vec!</span>[<span class="string">"irohdns.example."</span>.to_string(), <span class="string">"."</span>.to_string()],
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a>                default_soa: <span class="string">"irohdns.example hostmaster.irohdns.example 0 10800 3600 604800 3600"
-<a href=#277 id=277 data-nosnippet>277</a>                    </span>.to_string(),
-<a href=#278 id=278 data-nosnippet>278</a>                default_ttl: <span class="number">900</span>,
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a>                rr_a: <span class="prelude-val">Some</span>(Ipv4Addr::LOCALHOST),
-<a href=#281 id=281 data-nosnippet>281</a>                rr_aaaa: <span class="prelude-val">None</span>,
-<a href=#282 id=282 data-nosnippet>282</a>                rr_ns: <span class="prelude-val">Some</span>(<span class="string">"ns1.irohdns.example."</span>.to_string()),
-<a href=#283 id=283 data-nosnippet>283</a>            },
-<a href=#284 id=284 data-nosnippet>284</a>            zone_store: <span class="prelude-val">None</span>,
-<a href=#285 id=285 data-nosnippet>285</a>            metrics: <span class="prelude-val">None</span>,
-<a href=#286 id=286 data-nosnippet>286</a>            mainline: <span class="prelude-val">None</span>,
-<a href=#287 id=287 data-nosnippet>287</a>            pkarr_put_rate_limit: RateLimitConfig::default(),
-<a href=#288 id=288 data-nosnippet>288</a>            data_dir: <span class="prelude-val">None</span>,
-<a href=#289 id=289 data-nosnippet>289</a>        }
-<a href=#290 id=290 data-nosnippet>290</a>    }
-<a href=#291 id=291 data-nosnippet>291</a>}</code></pre></div></section></main></body></html>
+<a href=#262 id=262 data-nosnippet>262</a>                listen_backlog: <span class="prelude-val">None</span>,
+<a href=#263 id=263 data-nosnippet>263</a>            }),
+<a href=#264 id=264 data-nosnippet>264</a>            https: <span class="prelude-val">Some</span>(HttpsConfig {
+<a href=#265 id=265 data-nosnippet>265</a>                port: <span class="number">8443</span>,
+<a href=#266 id=266 data-nosnippet>266</a>                bind_addr: <span class="prelude-val">None</span>,
+<a href=#267 id=267 data-nosnippet>267</a>                listen_backlog: <span class="prelude-val">None</span>,
+<a href=#268 id=268 data-nosnippet>268</a>                domains: <span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()],
+<a href=#269 id=269 data-nosnippet>269</a>                cert_mode: CertMode::SelfSigned,
+<a href=#270 id=270 data-nosnippet>270</a>                letsencrypt_contact: <span class="prelude-val">None</span>,
+<a href=#271 id=271 data-nosnippet>271</a>                letsencrypt_prod: <span class="prelude-val">None</span>,
+<a href=#272 id=272 data-nosnippet>272</a>            }),
+<a href=#273 id=273 data-nosnippet>273</a>            dns: DnsConfig {
+<a href=#274 id=274 data-nosnippet>274</a>                port: <span class="number">5300</span>,
+<a href=#275 id=275 data-nosnippet>275</a>                bind_addr: <span class="prelude-val">None</span>,
+<a href=#276 id=276 data-nosnippet>276</a>                origins: <span class="macro">vec!</span>[<span class="string">"irohdns.example."</span>.to_string(), <span class="string">"."</span>.to_string()],
+<a href=#277 id=277 data-nosnippet>277</a>
+<a href=#278 id=278 data-nosnippet>278</a>                default_soa: <span class="string">"irohdns.example hostmaster.irohdns.example 0 10800 3600 604800 3600"
+<a href=#279 id=279 data-nosnippet>279</a>                    </span>.to_string(),
+<a href=#280 id=280 data-nosnippet>280</a>                default_ttl: <span class="number">900</span>,
+<a href=#281 id=281 data-nosnippet>281</a>
+<a href=#282 id=282 data-nosnippet>282</a>                rr_a: <span class="prelude-val">Some</span>(Ipv4Addr::LOCALHOST),
+<a href=#283 id=283 data-nosnippet>283</a>                rr_aaaa: <span class="prelude-val">None</span>,
+<a href=#284 id=284 data-nosnippet>284</a>                rr_ns: <span class="prelude-val">Some</span>(<span class="string">"ns1.irohdns.example."</span>.to_string()),
+<a href=#285 id=285 data-nosnippet>285</a>            },
+<a href=#286 id=286 data-nosnippet>286</a>            zone_store: <span class="prelude-val">None</span>,
+<a href=#287 id=287 data-nosnippet>287</a>            metrics: <span class="prelude-val">None</span>,
+<a href=#288 id=288 data-nosnippet>288</a>            mainline: <span class="prelude-val">None</span>,
+<a href=#289 id=289 data-nosnippet>289</a>            pkarr_put_rate_limit: RateLimitConfig::default(),
+<a href=#290 id=290 data-nosnippet>290</a>            data_dir: <span class="prelude-val">None</span>,
+<a href=#291 id=291 data-nosnippet>291</a>        }
+<a href=#292 id=292 data-nosnippet>292</a>    }
+<a href=#293 id=293 data-nosnippet>293</a>}</code></pre></div></section></main></body></html>
