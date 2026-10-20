@@ -59,10 +59,7 @@ impl CertMode {
 /// How long a client may take to complete the TLS handshake.
 ///
 /// Generous, so that clients on lossy high-latency links still get through.
-#[cfg(not(test))]
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
-#[cfg(test)]
-const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// TLS Certificate Authority acceptor.
 #[derive(Clone)]
@@ -200,4 +197,34 @@ fn escape_hostname(hostname: &str) -> Cow<'_, str> {
     let regex = UNSAFE_HOSTNAME_CHARACTERS
         .get_or_init(|| regex::Regex::new(r"[^a-zA-Z0-9-\.]").expect("valid regex"));
     regex.replace_all(hostname, "")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use axum_server::accept::Accept;
+    use tokio::time::Instant;
+
+    use super::{TLS_HANDSHAKE_TIMEOUT, TlsAcceptor};
+
+    #[tokio::test(start_paused = true)]
+    async fn test_handshake_timeout() {
+        let TlsAcceptor::Manual(inner) =
+            TlsAcceptor::self_signed(vec!["localhost".to_string()]).unwrap()
+        else {
+            unreachable!("self-signed mode uses the manual acceptor");
+        };
+        let acceptor = TlsAcceptor::Manual(inner.handshake_timeout(Duration::from_secs(3600)));
+        let (_client, server_io) = tokio::io::duplex(1024);
+
+        let start = Instant::now();
+        let accept = acceptor.accept(server_io, ());
+        let err = tokio::time::timeout(TLS_HANDSHAKE_TIMEOUT + Duration::from_secs(1), accept)
+            .await
+            .expect("handshake timeout did not fire")
+            .expect_err("handshake cannot succeed without a client");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(start.elapsed() >= TLS_HANDSHAKE_TIMEOUT);
+    }
 }

@@ -77,10 +77,7 @@ fn bind_listener(addr: SocketAddr, backlog: u32) -> std::io::Result<std::net::Tc
 /// How long a connection may take to send the headers of its next request.
 ///
 /// This also closes keep-alive connections that stay idle after a request.
-#[cfg(not(test))]
 const HTTP1_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
-#[cfg(test)]
-const HTTP1_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Enable hyper's HTTP/1 header read timeout.
 ///
@@ -416,17 +413,41 @@ mod tests {
         Ok(())
     }
 
-    /// Long enough for both timeouts, which are 1s in tests.
-    const CLOSE_DEADLINE: Duration = Duration::from_secs(5);
+    /// Real time the server gets to close a connection once its clock has been advanced.
+    const CLOSE_DEADLINE: Duration = Duration::from_secs(2);
 
-    /// Reads from `stream` until the server closes it, or fails at [`CLOSE_DEADLINE`].
-    async fn read_until_closed(stream: &mut TcpStream) -> n0_error::Result<Vec<u8>> {
-        let mut received = Vec::new();
-        tokio::time::timeout(CLOSE_DEADLINE, stream.read_to_end(&mut received))
+    async fn assert_closed_after(stream: &mut TcpStream, timeout: Duration) -> n0_error::Result {
+        assert_open(stream).await;
+
+        advance(timeout - Duration::from_secs(1)).await;
+        assert_open(stream).await;
+
+        advance(Duration::from_secs(2)).await;
+        let mut buf = [0; 1];
+        let read = tokio::time::timeout(CLOSE_DEADLINE, stream.read(&mut buf))
             .await
-            .std_context("server did not close the connection")?
-            .anyerr()?;
-        Ok(received)
+            .std_context("server did not close the connection")?;
+        match read {
+            Ok(0) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => Ok(()),
+            other => panic!("expected the server to close the connection: {other:?}"),
+        }
+    }
+
+    async fn assert_open(stream: &mut TcpStream) {
+        let mut buf = [0; 1];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), stream.read(&mut buf))
+                .await
+                .is_err(),
+            "connection closed before its timeout"
+        );
+    }
+
+    async fn advance(duration: Duration) {
+        tokio::time::pause();
+        tokio::time::advance(duration).await;
+        tokio::time::resume();
     }
 
     #[tokio::test]
@@ -441,34 +462,18 @@ mod tests {
             .write_all(b"GET /healthcheck HTTP/1.1\r\nhost: localhost\r\n\r\n")
             .await
             .anyerr()?;
-        let received = read_until_closed(&mut stream).await?;
-        assert!(received.starts_with(b"HTTP/1.1 200 OK"));
-
-        server.shutdown().await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_tls_handshake_timeout() -> n0_error::Result {
-        let dir = tempfile::tempdir()?;
-        let https_config = HttpsConfig {
-            port: 0,
-            bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            domains: vec!["localhost".to_string()],
-            cert_mode: crate::http::CertMode::SelfSigned,
-            letsencrypt_contact: None,
-            letsencrypt_prod: None,
-            listen_backlog: None,
-        };
-        let server =
-            Server::spawn_for_tests_with_options(dir.path(), None, None, Some(https_config))
-                .await?;
-        let addr = server.https_addr().expect("https is bound");
-
-        let mut stream = TcpStream::connect(addr).await.anyerr()?;
-        let received = read_until_closed(&mut stream).await?;
-        assert!(received.is_empty());
+        let mut response = Vec::new();
+        while !response.ends_with(b"\r\n\r\nOK") {
+            let mut chunk = [0; 1024];
+            let n = tokio::time::timeout(CLOSE_DEADLINE, stream.read(&mut chunk))
+                .await
+                .std_context("no response from server")?
+                .anyerr()?;
+            assert!(n > 0, "connection closed before the response");
+            response.extend_from_slice(&chunk[..n]);
+        }
+        assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+        assert_closed_after(&mut stream, super::HTTP1_HEADER_READ_TIMEOUT).await?;
 
         server.shutdown().await?;
         Ok(())
