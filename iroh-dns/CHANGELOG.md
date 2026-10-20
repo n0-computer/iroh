@@ -2,6 +2,16 @@
 
 All notable changes to iroh-dns will be documented in this file.
 
+## [1.4.0](https://github.com/n0-computer/iroh/compare/v1.3.0..1.4.0) - 2026-10-20
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix typo ([#4560](https://github.com/n0-computer/iroh/issues/4560)) - ([187f59e](https://github.com/n0-computer/iroh/commit/187f59e80afdae6bd9866002b33d3365c00b06d8))
+
+# Changelog
+
+All notable changes to iroh-dns will be documented in this file.
+
 ## [1.3.0](https://github.com/n0-computer/iroh/compare/v1.1.0..1.3.0) - 2026-09-09
 
 ### ⛰️  Features
