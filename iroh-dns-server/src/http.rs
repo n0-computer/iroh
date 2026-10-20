@@ -15,10 +15,14 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use hyper_util::{
+    rt::{TokioExecutor, TokioTimer},
+    server::conn::auto,
+};
 use n0_error::{Result, StdResultExt, anyerr, bail_any};
 use serde::{Deserialize, Serialize};
 use socket2::{SockRef, TcpKeepalive};
-use tokio::{net::TcpListener, task::JoinSet};
+use tokio::{net::TcpSocket, task::JoinSet};
 use tower_http::{
     cors::{self, CorsLayer},
     trace::TraceLayer,
@@ -52,6 +56,40 @@ fn set_keepalive(listener: &std::net::TcpListener) -> std::io::Result<()> {
     SockRef::from(listener).set_tcp_keepalive(&keepalive)
 }
 
+/// Listen backlog when none is configured.
+/// Tokio and std default to 128, which
+/// overflows under bursts of slow handshakes.
+const DEFAULT_LISTEN_BACKLOG: u32 = 1024;
+
+/// Bind a TCP listener on `addr` with a listen queue of `backlog`.
+fn bind_listener(addr: SocketAddr, backlog: u32) -> std::io::Result<std::net::TcpListener> {
+    let socket = match addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4()?,
+        SocketAddr::V6(_) => TcpSocket::new_v6()?,
+    };
+
+    #[cfg(not(windows))]
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
+    socket.listen(backlog)?.into_std()
+}
+
+/// How long a connection may take to send the headers of its next request.
+///
+/// This also closes keep-alive connections that stay idle after a request.
+const HTTP1_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Enable hyper's HTTP/1 header read timeout.
+///
+/// hyper ignores its default timeout unless a timer is set and
+/// idle connections then stay open forever.
+fn set_header_read_timeout(builder: &mut auto::Builder<TokioExecutor>) {
+    builder
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HTTP1_HEADER_READ_TIMEOUT);
+}
+
 /// Configuration for the HTTP listener.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
@@ -60,6 +98,8 @@ pub struct HttpConfig {
     pub port: u16,
     /// Address to bind the HTTP listener to (defaults to `::`, i.e. IPv6 wildcard which also covers IPv4).
     pub bind_addr: Option<IpAddr>,
+    /// Listen queue length (defaults to 1024, capped by `net.core.somaxconn` on Linux).
+    pub listen_backlog: Option<u32>,
 }
 
 /// Configuration for the HTTPS listener.
@@ -72,6 +112,8 @@ pub struct HttpsConfig {
     pub port: u16,
     /// Address to bind the HTTPS listener to (defaults to `::`, i.e. IPv6 wildcard which also covers IPv4).
     pub bind_addr: Option<IpAddr>,
+    /// Listen queue length (defaults to 1024, capped by `net.core.somaxconn` on Linux).
+    pub listen_backlog: Option<u32>,
     /// Domains for which TLS certificates are issued or loaded.
     pub domains: Vec<String>,
     /// Strategy used to obtain TLS certificates.
@@ -120,15 +162,13 @@ impl HttpServer {
                 config.port,
             );
             let app = app.clone();
-            let listener = TcpListener::bind(bind_addr)
-                .await
-                .anyerr()?
-                .into_std()
-                .anyerr()?;
+            let backlog = config.listen_backlog.unwrap_or(DEFAULT_LISTEN_BACKLOG);
+            let listener = bind_listener(bind_addr, backlog).anyerr()?;
             let bound_addr = listener.local_addr().anyerr()?;
             set_keepalive(&listener).anyerr()?;
-            let fut = axum_server::from_tcp(listener)?
-                .serve(app.into_make_service_with_connect_info::<SocketAddr>());
+            let mut server = axum_server::from_tcp(listener)?;
+            set_header_read_timeout(server.http_builder());
+            let fut = server.serve(app.into_make_service_with_connect_info::<SocketAddr>());
             info!("HTTP server listening on {bind_addr}");
             tasks.spawn(fut);
             Some(bound_addr)
@@ -161,16 +201,13 @@ impl HttpServer {
                     )
                     .await?
             };
-            let listener = TcpListener::bind(bind_addr)
-                .await
-                .anyerr()?
-                .into_std()
-                .anyerr()?;
+            let backlog = config.listen_backlog.unwrap_or(DEFAULT_LISTEN_BACKLOG);
+            let listener = bind_listener(bind_addr, backlog).anyerr()?;
             let bound_addr = listener.local_addr().anyerr()?;
             set_keepalive(&listener).anyerr()?;
-            let fut = axum_server::from_tcp(listener)?
-                .acceptor(acceptor)
-                .serve(app.into_make_service_with_connect_info::<SocketAddr>());
+            let mut server = axum_server::from_tcp(listener)?.acceptor(acceptor);
+            set_header_read_timeout(server.http_builder());
+            let fut = server.serve(app.into_make_service_with_connect_info::<SocketAddr>());
             info!("HTTPS server listening on {bind_addr}");
             tasks.spawn(fut);
             Some(bound_addr)
@@ -327,7 +364,10 @@ async fn metrics_middleware(
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        time::Duration,
+    };
 
     use iroh::{
         RelayUrl, SecretKey,
@@ -338,8 +378,106 @@ mod tests {
     use n0_error::StdResultExt;
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpStream,
+    };
 
     use crate::{http::HttpsConfig, server::Server};
+
+    /// Linux completes at most `backlog + 1` handshakes that are not yet accepted,
+    /// then drops further SYNs, so a sequential connect beyond that times out.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[traced_test]
+    async fn test_listen_backlog() -> n0_error::Result {
+        const BACKLOG: u32 = 4;
+        const MAX_CLIENTS: u32 = 64;
+
+        let listener = super::bind_listener((Ipv4Addr::LOCALHOST, 0).into(), BACKLOG).anyerr()?;
+        let addr = listener.local_addr().anyerr()?;
+
+        let mut streams = Vec::new();
+        while streams.len() < MAX_CLIENTS as usize {
+            let connect = tokio::net::TcpStream::connect(addr);
+            match tokio::time::timeout(std::time::Duration::from_millis(250), connect).await {
+                Ok(stream) => streams.push(stream.anyerr()?),
+                Err(_elapsed) => break,
+            }
+        }
+        assert!(
+            (BACKLOG..=BACKLOG + 1).contains(&(streams.len() as u32)),
+            "accept queue held {} connections for backlog {BACKLOG}",
+            streams.len()
+        );
+        Ok(())
+    }
+
+    /// Real time the server gets to close a connection once its clock has been advanced.
+    const CLOSE_DEADLINE: Duration = Duration::from_secs(2);
+
+    async fn assert_closed_after(stream: &mut TcpStream, timeout: Duration) -> n0_error::Result {
+        assert_open(stream).await;
+
+        advance(timeout - Duration::from_secs(1)).await;
+        assert_open(stream).await;
+
+        advance(Duration::from_secs(2)).await;
+        let mut buf = [0; 1];
+        let read = tokio::time::timeout(CLOSE_DEADLINE, stream.read(&mut buf))
+            .await
+            .std_context("server did not close the connection")?;
+        match read {
+            Ok(0) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => Ok(()),
+            other => panic!("expected the server to close the connection: {other:?}"),
+        }
+    }
+
+    async fn assert_open(stream: &mut TcpStream) {
+        let mut buf = [0; 1];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), stream.read(&mut buf))
+                .await
+                .is_err(),
+            "connection closed before its timeout"
+        );
+    }
+
+    async fn advance(duration: Duration) {
+        tokio::time::pause();
+        tokio::time::advance(duration).await;
+        tokio::time::resume();
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_idle_connection_closed() -> n0_error::Result {
+        let dir = tempfile::tempdir()?;
+        let server = Server::spawn_for_tests(dir.path()).await?;
+        let addr = server.http_addr().expect("http is bound");
+
+        let mut stream = TcpStream::connect(addr).await.anyerr()?;
+        stream
+            .write_all(b"GET /healthcheck HTTP/1.1\r\nhost: localhost\r\n\r\n")
+            .await
+            .anyerr()?;
+        let mut response = Vec::new();
+        while !response.ends_with(b"\r\n\r\nOK") {
+            let mut chunk = [0; 1024];
+            let n = tokio::time::timeout(CLOSE_DEADLINE, stream.read(&mut chunk))
+                .await
+                .std_context("no response from server")?
+                .anyerr()?;
+            assert!(n > 0, "connection closed before the response");
+            response.extend_from_slice(&chunk[..n]);
+        }
+        assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+        assert_closed_after(&mut stream, super::HTTP1_HEADER_READ_TIMEOUT).await?;
+
+        server.shutdown().await?;
+        Ok(())
+    }
 
     #[tokio::test]
     #[traced_test]
@@ -349,6 +487,7 @@ mod tests {
         let https_config = HttpsConfig {
             port: 0,
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            listen_backlog: None,
             domains: vec!["localhost".to_string()],
             cert_mode: crate::http::CertMode::SelfSigned,
             letsencrypt_contact: None,

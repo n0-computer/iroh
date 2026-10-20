@@ -259,10 +259,12 @@ impl Default for Config {
             http: Some(HttpConfig {
                 port: 8080,
                 bind_addr: None,
+                listen_backlog: None,
             }),
             https: Some(HttpsConfig {
                 port: 8443,
                 bind_addr: None,
+                listen_backlog: None,
                 domains: vec!["localhost".to_string()],
                 cert_mode: CertMode::SelfSigned,
                 letsencrypt_contact: None,
