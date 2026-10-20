@@ -18,7 +18,7 @@ use axum::{
 use n0_error::{Result, StdResultExt, anyerr, bail_any};
 use serde::{Deserialize, Serialize};
 use socket2::{SockRef, TcpKeepalive};
-use tokio::{net::TcpListener, task::JoinSet};
+use tokio::{net::TcpSocket, task::JoinSet};
 use tower_http::{
     cors::{self, CorsLayer},
     trace::TraceLayer,
@@ -52,6 +52,24 @@ fn set_keepalive(listener: &std::net::TcpListener) -> std::io::Result<()> {
     SockRef::from(listener).set_tcp_keepalive(&keepalive)
 }
 
+/// Listen backlog when none is configured.
+/// Tokio and std default to 128, which
+/// overflows under bursts of slow handshakes.
+const DEFAULT_LISTEN_BACKLOG: u32 = 1024;
+
+/// Bind a TCP listener on `addr` with a listen queue of `backlog`.
+fn bind_listener(addr: SocketAddr, backlog: u32) -> std::io::Result<std::net::TcpListener> {
+    let socket = match addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4()?,
+        SocketAddr::V6(_) => TcpSocket::new_v6()?,
+    };
+
+    #[cfg(not(windows))]
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
+    socket.listen(backlog)?.into_std()
+}
+
 /// Configuration for the HTTP listener.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
@@ -60,6 +78,8 @@ pub struct HttpConfig {
     pub port: u16,
     /// Address to bind the HTTP listener to (defaults to `::`, i.e. IPv6 wildcard which also covers IPv4).
     pub bind_addr: Option<IpAddr>,
+    /// Listen queue length (defaults to 1024, capped by `net.core.somaxconn` on Linux).
+    pub listen_backlog: Option<u32>,
 }
 
 /// Configuration for the HTTPS listener.
@@ -72,6 +92,8 @@ pub struct HttpsConfig {
     pub port: u16,
     /// Address to bind the HTTPS listener to (defaults to `::`, i.e. IPv6 wildcard which also covers IPv4).
     pub bind_addr: Option<IpAddr>,
+    /// Listen queue length (defaults to 1024, capped by `net.core.somaxconn` on Linux).
+    pub listen_backlog: Option<u32>,
     /// Domains for which TLS certificates are issued or loaded.
     pub domains: Vec<String>,
     /// Strategy used to obtain TLS certificates.
@@ -120,11 +142,8 @@ impl HttpServer {
                 config.port,
             );
             let app = app.clone();
-            let listener = TcpListener::bind(bind_addr)
-                .await
-                .anyerr()?
-                .into_std()
-                .anyerr()?;
+            let backlog = config.listen_backlog.unwrap_or(DEFAULT_LISTEN_BACKLOG);
+            let listener = bind_listener(bind_addr, backlog).anyerr()?;
             let bound_addr = listener.local_addr().anyerr()?;
             set_keepalive(&listener).anyerr()?;
             let fut = axum_server::from_tcp(listener)?
@@ -161,11 +180,8 @@ impl HttpServer {
                     )
                     .await?
             };
-            let listener = TcpListener::bind(bind_addr)
-                .await
-                .anyerr()?
-                .into_std()
-                .anyerr()?;
+            let backlog = config.listen_backlog.unwrap_or(DEFAULT_LISTEN_BACKLOG);
+            let listener = bind_listener(bind_addr, backlog).anyerr()?;
             let bound_addr = listener.local_addr().anyerr()?;
             set_keepalive(&listener).anyerr()?;
             let fut = axum_server::from_tcp(listener)?
@@ -341,6 +357,34 @@ mod tests {
 
     use crate::{http::HttpsConfig, server::Server};
 
+    /// Linux completes at most `backlog + 1` handshakes that are not yet accepted,
+    /// then drops further SYNs, so a sequential connect beyond that times out.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[traced_test]
+    async fn test_listen_backlog() -> n0_error::Result {
+        const BACKLOG: u32 = 4;
+        const MAX_CLIENTS: u32 = 64;
+
+        let listener = super::bind_listener((Ipv4Addr::LOCALHOST, 0).into(), BACKLOG).anyerr()?;
+        let addr = listener.local_addr().anyerr()?;
+
+        let mut streams = Vec::new();
+        while streams.len() < MAX_CLIENTS as usize {
+            let connect = tokio::net::TcpStream::connect(addr);
+            match tokio::time::timeout(std::time::Duration::from_millis(250), connect).await {
+                Ok(stream) => streams.push(stream.anyerr()?),
+                Err(_elapsed) => break,
+            }
+        }
+        assert!(
+            (BACKLOG..=BACKLOG + 1).contains(&(streams.len() as u32)),
+            "accept queue held {} connections for backlog {BACKLOG}",
+            streams.len()
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_doh() -> n0_error::Result {
@@ -349,6 +393,7 @@ mod tests {
         let https_config = HttpsConfig {
             port: 0,
             bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            listen_backlog: None,
             domains: vec!["localhost".to_string()],
             cert_mode: crate::http::CertMode::SelfSigned,
             letsencrypt_contact: None,
