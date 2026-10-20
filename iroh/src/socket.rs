@@ -59,7 +59,7 @@ use url::Url;
 
 use self::{
     remote_map::{RemoteMap, RemoteStateMessage},
-    transports::{RelayActorConfig, Transports},
+    transports::{RelayActorConfig, RelayConnections, Transports},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -918,6 +918,7 @@ impl EndpointInner {
             .unwrap_or_else(RelayMap::empty);
 
         let ipv6_reported = Arc::new(AtomicBool::new(false));
+        let relay_connections = RelayConnections::new(metrics.socket.clone());
 
         let relay_actor_config = RelayActorConfig {
             my_relay: HomeRelayWatch::default(),
@@ -929,6 +930,7 @@ impl EndpointInner {
             tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
             relay_map: relay_map.clone(),
+            connections: relay_connections.clone(),
         };
 
         let shutdown_state = ShutdownState::default();
@@ -979,6 +981,7 @@ impl EndpointInner {
                 shutdown_token.child_token(),
                 path_selector,
                 span.clone(),
+                relay_connections,
             )
         };
 
@@ -1022,8 +1025,9 @@ impl EndpointInner {
 
         let runtime = Arc::new(Runtime::new(secret_key.public()));
 
+        let transports = Arc::new(transports);
         let noq_sockets = transports
-            .noq_sockets(sock.clone(), transport_recvs)
+            .noq_sockets(&sock, transport_recvs)
             .map_err(|err| e!(BindError::CreateQuicEndpoint, err))?;
         let endpoint = noq::Endpoint::new_with_multiple_sockets(
             endpoint_config,
@@ -1032,6 +1036,9 @@ impl EndpointInner {
             runtime.clone(),
         )
         .map_err(|err| e!(BindError::CreateQuicEndpoint, err))?;
+        transports
+            .start_relay_sockets(endpoint.clone(), sock.clone())
+            .await;
 
         let network_monitor = netmon::Monitor::new()
             .await

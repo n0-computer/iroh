@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll, Waker, ready},
 };
 
-use iroh_base::{CustomAddr, EndpointAddr, EndpointId, RelayUrl};
+use iroh_base::{CustomAddr, EndpointAddr, EndpointId};
 use n0_future::task::JoinSet;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
@@ -33,7 +33,7 @@ use super::{
     DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{
         AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MappedAddr, MultipathMappedAddr,
-        RelayMappedAddr,
+        RelayAddrMap,
     },
     transports,
 };
@@ -76,7 +76,9 @@ pub(crate) struct MappedAddrs {
     /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
     pub(super) endpoint_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
-    pub(super) relay_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    ///
+    /// [`RelayMappedAddr`]: super::mapped_addrs::RelayMappedAddr
+    pub(super) relay_addrs: RelayAddrMap,
     /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
     pub(super) custom_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
 }
@@ -137,7 +139,7 @@ impl MappedAddrs {
 /// Returns `None` for [`MultipathMappedAddr::Mixed`] addresses or unknown mapped addresses.
 fn to_transport_addr(
     addr: impl Into<MultipathMappedAddr>,
-    relay_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    relay_addrs: &RelayAddrMap,
     custom_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
 ) -> Option<transports::Addr> {
     match addr.into() {
@@ -208,9 +210,13 @@ impl RemoteMap {
         shutdown_token: CancellationToken,
         path_selector: Arc<dyn PathSelector>,
         span: Span,
+        relay_connections: transports::RelayConnections,
     ) -> Self {
         Self {
-            mapped_addrs: Default::default(),
+            mapped_addrs: MappedAddrs {
+                relay_addrs: RelayAddrMap::new(relay_connections),
+                ..Default::default()
+            },
             senders: Default::default(),
             tasks: Tasks {
                 metrics,
@@ -429,7 +435,7 @@ mod tests {
 
     use bytes::Bytes;
     use futures_util::StreamExt;
-    use iroh_base::{SecretKey, TransportAddr};
+    use iroh_base::{RelayUrl, SecretKey, TransportAddr};
     use n0_future::future::now_or_never;
     use n0_tracing_test::traced_test;
     use n0_watcher::Watchable;
@@ -595,6 +601,7 @@ mod tests {
             shutdown_token.clone(),
             Arc::new(BiasedRttPathSelector::default()),
             Span::none(),
+            Default::default(),
         );
         let guards = (watchable, shutdown_token.clone().drop_guard());
         (remote_map, shutdown_token, guards)

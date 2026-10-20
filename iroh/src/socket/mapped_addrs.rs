@@ -12,10 +12,13 @@ use std::{
 };
 
 use ipnet::Ipv6Net;
+use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
 use rand::Rng;
 use rustc_hash::FxHashMap;
 use tracing::trace;
+
+use super::transports::RelayConnections;
 
 /// The Prefix/L of all Unique Local Addresses.
 const ADDR_PREFIXL: u8 = 0xfd;
@@ -32,9 +35,13 @@ const CUSTOM_MAPPED_SUBNET: [u8; 2] = [0x00, 0x03];
 /// The Subnet ID for [`EndpointIdMappedAddr`]: fd15:70a:510b::/64.
 const ENDPOINT_ID_SUBNET: [u8; 2] = [0x00, 0x00];
 
-/// The range of all [`RelayMappedAddr`]s.
-pub(crate) fn relay_mapped_net() -> Ipv6Net {
-    mapped_net(RELAY_MAPPED_SUBNET)
+/// The range of the [`RelayMappedAddr`]s of the relay server with `index`.
+///
+/// Each relay server has a /80 of the relay /64, so noq can route to the socket of each.
+pub(crate) fn relay_mapped_net(index: u16) -> Ipv6Net {
+    let mut addr = mapped_net(RELAY_MAPPED_SUBNET).addr().octets();
+    addr[8..10].copy_from_slice(&index.to_be_bytes());
+    Ipv6Net::new(Ipv6Addr::from(addr), 80).expect("valid prefix length")
 }
 
 /// The range of all [`CustomMappedAddr`]s.
@@ -240,6 +247,17 @@ impl MappedAddr for RelayMappedAddr {
     }
 }
 
+impl RelayMappedAddr {
+    /// Generates an address in the range of the relay server with `index`.
+    ///
+    /// See [`relay_mapped_net`].
+    fn generate_in(index: u16) -> Self {
+        let mut addr = relay_mapped_net(index).addr().octets();
+        rand::rng().fill_bytes(&mut addr[10..16]);
+        Self(Ipv6Addr::from(addr))
+    }
+}
+
 impl TryFrom<Ipv6Addr> for RelayMappedAddr {
     type Error = RelayMappedAddrError;
 
@@ -359,12 +377,17 @@ where
 {
     /// Returns the [`MappedAddr`], generating one if needed.
     pub(super) fn get(&self, key: &K) -> V {
+        self.get_with(key, V::generate)
+    }
+
+    /// Returns the [`MappedAddr`], generating one with `generate` if needed.
+    fn get_with(&self, key: &K, generate: impl Fn() -> V) -> V {
         let mut inner = self.inner.lock().expect("poisoned");
         match inner.addrs.get(key) {
             Some(addr) => *addr,
             None => {
                 let addr = loop {
-                    let candidate = V::generate();
+                    let candidate = generate();
                     if !inner.lookup.contains_key(&candidate) {
                         break candidate;
                     }
@@ -381,6 +404,35 @@ where
     pub(super) fn lookup(&self, addr: &V) -> Option<K> {
         let inner = self.inner.lock().expect("poisoned");
         inner.lookup.get(addr).cloned()
+    }
+}
+
+/// The [`RelayMappedAddr`]s, each in the range of its relay server.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RelayAddrMap {
+    addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// Assigns each relay server its index, and so its range.
+    connections: RelayConnections,
+}
+
+impl RelayAddrMap {
+    pub(crate) fn new(connections: RelayConnections) -> Self {
+        Self {
+            addrs: Default::default(),
+            connections,
+        }
+    }
+
+    /// Returns the [`RelayMappedAddr`], generating one if needed.
+    pub(super) fn get(&self, key: &(RelayUrl, EndpointId)) -> RelayMappedAddr {
+        self.addrs.get_with(key, || {
+            RelayMappedAddr::generate_in(self.connections.get(&key.0).index())
+        })
+    }
+
+    /// Performs the reverse lookup.
+    pub(super) fn lookup(&self, addr: &RelayMappedAddr) -> Option<(RelayUrl, EndpointId)> {
+        self.addrs.lookup(addr)
     }
 }
 

@@ -16,7 +16,7 @@ use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
 use n0_future::time::{Duration, Sleep};
 use n0_watcher::Watcher;
-use relay::{RelayNetworkChangeSender, RelayReceiver, RelaySender};
+use relay::{RelayDatagramSender, RelayNetworkChangeSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace, warn};
 
@@ -27,7 +27,6 @@ use crate::{
     net_report::Report,
     socket::mapped_addrs::{
         AddrMap, CustomMappedAddr, DEFAULT_FAKE_ADDR, custom_mapped_net, endpoint_id_mapped_net,
-        relay_mapped_net,
     },
 };
 
@@ -43,7 +42,8 @@ pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpSelection, IpSender, IpTransport, IpTransports};
 pub(crate) use self::relay::{
-    HomeRelayWatch, RelayActorConfig, RelayConnectionFailure, RelayConnectionState, RelayTransport,
+    HomeRelayWatch, RelayActorConfig, RelayConnectionFailure, RelayConnectionState,
+    RelayConnections, RelayTransport,
 };
 
 /// How many times a transport may error on `poll_recv` in a row before we back off.
@@ -64,16 +64,11 @@ const RECV_ERROR_BACKOFF: Duration = Duration::from_secs(1);
 /// through a rebind after a network change.
 const MAX_RECV_ERRORS_BEFORE_GIVING_UP: usize = MAX_CONSECUTIVE_RECV_ERRORS + 30;
 
-/// How many datagrams noq may batch into one transmit over a relay.
-///
-/// The relay actor splits batches into relay frames, so this only bounds the work per
-/// `poll_send`. It matches a typical GSO limit.
-const RELAY_TRANSMIT_SEGMENTS: NonZeroUsize = NonZeroUsize::new(64).expect("non zero");
-
 /// Manages the different underlying data transports that the socket can support.
 ///
 /// This is the shared half: everything senders and address watchers need. The receive
-/// half of each transport lives in a [`TransportReceiver`], driven by its own noq socket.
+/// half of each IP and custom transport lives in a [`TransportReceiver`], driven by its own
+/// noq socket. The relay transport adds a noq socket per relay server itself.
 #[derive(Debug)]
 pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
@@ -94,7 +89,6 @@ pub(crate) struct Transports {
 pub(crate) enum TransportReceiver {
     #[cfg(not(wasm_browser))]
     Ip(IpTransport),
-    Relay(RelayReceiver),
     Custom(Arc<Mutex<Box<dyn CustomEndpoint>>>),
 }
 
@@ -103,7 +97,6 @@ impl fmt::Display for TransportReceiver {
         match self {
             #[cfg(not(wasm_browser))]
             Self::Ip(t) => t.fmt(f),
-            Self::Relay(t) => t.fmt(f),
             Self::Custom(_) => f.write_str("CustomTransport"),
         }
     }
@@ -120,7 +113,6 @@ impl TransportReceiver {
         match self {
             #[cfg(not(wasm_browser))]
             Self::Ip(t) => t.poll_recv(cx, bufs, metas, recv_infos),
-            Self::Relay(t) => t.poll_recv(cx, bufs, metas, recv_infos),
             Self::Custom(t) => t
                 .lock()
                 .expect("poisoned")
@@ -264,7 +256,7 @@ impl TransportConfig {
 impl Transports {
     /// Binds the transports.
     ///
-    /// Returns the shared half and the receive half of every transport.
+    /// Returns the shared half, and the receive half of every IP and custom transport.
     pub(crate) fn bind(
         configs: &[TransportConfig],
         relay_actor_config: RelayActorConfig,
@@ -311,10 +303,10 @@ impl Transports {
             .iter()
             .filter(|t| matches!(t, TransportConfig::Relay { .. }))
         {
-            let (transport, recv) =
-                RelayTransport::new(relay_actor_config.clone(), shutdown_token.child_token());
-            relay.push(transport);
-            recvs.push(TransportReceiver::Relay(recv));
+            relay.push(RelayTransport::new(
+                relay_actor_config.clone(),
+                shutdown_token.child_token(),
+            ));
         }
 
         let mut custom = Vec::new();
@@ -416,27 +408,28 @@ impl Transports {
         }
     }
 
-    /// Creates the noq sockets for all transports, with their routes.
+    /// Creates the noq sockets for the IP and custom transports, with their routes.
     ///
-    /// Every transport gets a socket that receives on it. IP transports also send on their
-    /// own socket, routed by their config. The relay and the custom transports each share
-    /// one more socket, which only sends and routes their mapped address range. A last one
-    /// routes the [`EndpointIdMappedAddr`] range, so sends to a remote over all its paths
-    /// get their own send waker.
+    /// Every such transport gets a socket that receives on it. IP transports also send on
+    /// their own socket, routed by their config. The custom transports share one more
+    /// socket, which only sends and routes their mapped address range. A last one routes the
+    /// [`EndpointIdMappedAddr`] range, so sends to a remote over all its paths get their own
+    /// send waker. The relay transport adds its sockets later, see
+    /// [`Self::start_relay_sockets`].
     ///
     /// Fails if no transport is bound at all, as the endpoint could not reach anything.
     ///
     /// [`EndpointIdMappedAddr`]: crate::socket::mapped_addrs::EndpointIdMappedAddr
     #[allow(clippy::type_complexity)] // The argument of `noq::Endpoint::new_with_multiple_sockets`.
     pub(crate) fn noq_sockets(
-        self,
-        sock: Arc<Socket>,
+        self: &Arc<Self>,
+        sock: &Arc<Socket>,
         recvs: Vec<TransportReceiver>,
     ) -> io::Result<Vec<(Box<dyn noq::AsyncUdpSocketNext>, Vec<noq::SocketRoute>)>> {
-        if recvs.is_empty() {
+        if recvs.is_empty() && self.relay.is_empty() {
             return Err(io::Error::other("no valid address available"));
         }
-        let transports = Arc::new(self);
+        let transports = self;
         let live_transports = Arc::new(AtomicUsize::new(recvs.len()));
         let socket =
             |kind, transport: Option<TransportReceiver>| -> Box<dyn noq::AsyncUdpSocketNext> {
@@ -463,13 +456,11 @@ impl Transports {
                 TransportReceiver::Ip(t) => {
                     (SocketKind::Ip(t.clone()), vec![t.config().socket_route()])
                 }
-                TransportReceiver::Relay(_) => (SocketKind::Relay, Vec::new()),
                 TransportReceiver::Custom(_) => (SocketKind::Custom, Vec::new()),
             };
             sockets.push((socket(kind, Some(recv)), routes));
         }
         for (kind, net) in [
-            (SocketKind::Relay, relay_mapped_net()),
             (SocketKind::Custom, custom_mapped_net()),
             (SocketKind::Mixed, endpoint_id_mapped_net()),
         ] {
@@ -477,6 +468,13 @@ impl Transports {
             sockets.push((socket(kind, None), vec![route]));
         }
         Ok(sockets)
+    }
+
+    /// Lets the relay transport add a noq socket to `endpoint` for each relay server.
+    pub(crate) async fn start_relay_sockets(&self, endpoint: noq::Endpoint, sock: Arc<Socket>) {
+        for relay in &self.relay {
+            relay.start_sockets(endpoint.clone(), sock.clone()).await;
+        }
     }
 
     /// Creates a sender for the sockets of `kind`, and its segmentation limit
@@ -487,13 +485,6 @@ impl Transports {
                 TransportSender::Ip(t.create_sender()),
                 t.max_transmit_segments(),
             ),
-            SocketKind::Relay => {
-                let senders = self.relay.iter().map(|t| t.create_sender());
-                (
-                    TransportSender::Relay(senders.collect()),
-                    RELAY_TRANSMIT_SEGMENTS,
-                )
-            }
             SocketKind::Custom => {
                 let custom = self.custom.iter().map(|t| t.lock().expect("poisoned"));
                 let (senders, segments): (Vec<_>, Vec<_>) = custom
@@ -516,7 +507,8 @@ impl Transports {
             ip: IpSelection::new(self.ip.iter().map(|t| t.config())),
             #[cfg(not(wasm_browser))]
             ip_senders: self.ip.iter().map(|t| t.create_sender()).collect(),
-            relay: self.relay.iter().map(|t| t.create_sender()).collect(),
+            relay: self.relay.first().map(|t| t.connections().clone()),
+            relay_senders: Vec::new(),
             custom: self
                 .custom
                 .iter()
@@ -983,7 +975,9 @@ pub(crate) struct TransportsSender {
     /// Indexed by the transport index of [`IpSelection`]
     #[cfg(not(wasm_browser))]
     ip_senders: Vec<IpSender>,
-    relay: Vec<RelaySender>,
+    relay: Option<RelayConnections>,
+    /// The senders of the relay servers sent to so far
+    relay_senders: Vec<RelayDatagramSender>,
     custom: Vec<Arc<dyn CustomSender>>,
 }
 
@@ -1009,20 +1003,8 @@ impl TransportsSender {
                 }
             }
             FourTuple::Relay { url, endpoint_id } => {
-                let mut has_valid_sender = false;
-                for sender in self
-                    .relay
-                    .iter_mut()
-                    .filter(|s| s.is_valid_send_addr(url, endpoint_id))
-                {
-                    has_valid_sender = true;
-                    match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
-                        Poll::Pending => {}
-                        Poll::Ready(res) => return Poll::Ready(res),
-                    }
-                }
-                if has_valid_sender {
-                    return Poll::Pending;
+                if let Some(sender) = self.relay_sender(url) {
+                    return sender.poll_send(cx, *endpoint_id, transmit);
                 }
             }
             FourTuple::Custom { remote, local } => {
@@ -1044,12 +1026,27 @@ impl TransportsSender {
     }
 }
 
+impl TransportsSender {
+    /// Returns the sender for `url`, creating it on first use, if there is a relay transport.
+    fn relay_sender(&mut self, url: &RelayUrl) -> Option<&mut RelayDatagramSender> {
+        let connections = self.relay.as_ref()?;
+        let senders = &mut self.relay_senders;
+        let index = match senders.iter().position(|sender| sender.url() == url) {
+            Some(index) => index,
+            None => {
+                senders.push(RelayDatagramSender::new(connections.get(url)));
+                senders.len() - 1
+            }
+        };
+        Some(&mut senders[index])
+    }
+}
+
 /// The transport side of a [`NoqSender`]
 #[derive(Debug)]
 enum TransportSender {
     #[cfg(not(wasm_browser))]
     Ip(IpSender),
-    Relay(Vec<RelaySender>),
     Custom(Vec<Arc<dyn CustomSender>>),
     /// Forwards Initial packets to the remote state actor
     ///
@@ -1111,27 +1108,6 @@ impl TransportSender {
                 }
                 return Poll::Ready(Ok(()));
             }
-            (Self::Relay(senders), MultipathMappedAddr::Relay(mapped_addr)) => {
-                let Some((url, endpoint_id)) = sock.mapped_addrs.relay_addrs.lookup(&mapped_addr)
-                else {
-                    error!("unknown RelayMappedAddr, dropped transmit");
-                    return Poll::Ready(Ok(()));
-                };
-                let mut has_valid_sender = false;
-                for sender in senders
-                    .iter_mut()
-                    .filter(|s| s.is_valid_send_addr(&url, &endpoint_id))
-                {
-                    has_valid_sender = true;
-                    match sender.poll_send(cx, url.clone(), endpoint_id, &transmit) {
-                        Poll::Pending => {}
-                        Poll::Ready(res) => return Poll::Ready(res),
-                    }
-                }
-                if has_valid_sender {
-                    return Poll::Pending;
-                }
-            }
             (Self::Custom(senders), MultipathMappedAddr::Custom(mapped_addr)) => {
                 let Some(remote) = sock.mapped_addrs.custom_addrs.lookup(&mapped_addr) else {
                     error!("unknown CustomMappedAddr, dropped transmit");
@@ -1159,8 +1135,7 @@ impl TransportSender {
                 let remote = SocketAddr::new(remote.ip().to_canonical(), remote.port());
                 return Pin::new(sender).poll_send(cx, remote, noq_transmit.src_ip, &transmit);
             }
-            // noq routed this destination to a socket whose transport cannot reach it, e.g. a
-            // relay address while no relay transport is configured.
+            // noq routed this destination to a socket whose transport cannot reach it.
             (_, mapped_addr) => {
                 trace!(dst = ?mapped_addr, "no valid transport available");
             }
@@ -1177,8 +1152,6 @@ impl TransportSender {
 enum SocketKind {
     #[cfg(not(wasm_browser))]
     Ip(IpTransport),
-    /// All relay transports
-    Relay,
     /// All custom transports
     Custom,
     /// The remote state actor, for Initial packets to an [`EndpointIdMappedAddr`]
@@ -1223,9 +1196,7 @@ impl noq::AsyncUdpSocketNext for NoqSocket {
         match &self.kind {
             #[cfg(not(wasm_browser))]
             SocketKind::Ip(t) => Ok(t.local_addr_watch().get()),
-            SocketKind::Relay | SocketKind::Custom | SocketKind::Mixed => {
-                Ok(DEFAULT_FAKE_ADDR.into())
-            }
+            SocketKind::Custom | SocketKind::Mixed => Ok(DEFAULT_FAKE_ADDR.into()),
         }
     }
 
@@ -1406,7 +1377,7 @@ mod tests {
             TransportsSender,
             impl futures_util::Stream<Item = ()> + Unpin,
         ) {
-            let (relay, receiver) = RelaySender::bounded_for_test(capacity);
+            let (relay, receiver) = RelayConnections::with_test_sink(capacity);
             #[cfg(not(wasm_browser))]
             let ip = IpTransports::bind(ip_configs, &EndpointMetrics::default())
                 .expect("test transports must bind");
@@ -1415,7 +1386,8 @@ mod tests {
                 ip: IpSelection::new(ip.iter().map(|t| t.config())),
                 #[cfg(not(wasm_browser))]
                 ip_senders: ip.iter().map(|t| t.create_sender()).collect(),
-                relay: vec![relay],
+                relay: Some(relay),
+                relay_senders: Vec::new(),
                 custom: Vec::new(),
             };
             (

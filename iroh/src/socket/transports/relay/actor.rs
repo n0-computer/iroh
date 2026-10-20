@@ -12,25 +12,24 @@
 //!       `TcpStream` connected to the relay server.
 //!   - Each [`ActiveRelayActor`] will try and maintain a connection with the relay server.
 //!     - If connections fail, exponential backoff is used for reconnections.
-//! - When `AsyncUdpSocket` needs to send datagrams:
-//!   - It puts them on a queue to the [`RelayActor`].
-//!   - The [`RelayActor`] ensures the correct [`ActiveRelayActor`] is running and
-//!     forwards datagrams to it.
-//!   - The ActiveRelayActor sends datagrams directly to the relay server.
-//! - The relay receive path is:
-//!   - Whenever [`ActiveRelayActor`] is connected it reads from the underlying `TcpStream`.
-//!   - Received datagrams are placed on an mpsc channel that now bypasses the
-//!     [`RelayActor`] and goes straight to the `AsyncUpdSocket` interface.
+//! - Each relay server has a [`RelayConnection`], and the [`RelayActor`] adds a noq socket
+//!   for each one.
+//!   - When connected, the [`ActiveRelayActor`] hands the halves of the [`Client`] to it.
+//!   - The noq socket receives datagrams straight from the stream half. Other frames come
+//!     to the [`ActiveRelayActor`].
+//!   - The senders of the noq connections write datagrams straight into the sink half. A
+//!     sender that finds the relay disconnected asks the [`RelayActor`] to connect it.
 //!
 //! [`Client`]: iroh_relay::client::Client
 
 #[cfg(test)]
 use std::net::SocketAddr;
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    future::Future,
+    collections::BTreeMap,
+    future::{Future, poll_fn},
+    io,
     net::IpAddr,
-    pin::{Pin, pin},
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -38,34 +37,37 @@ use std::{
 };
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
-use iroh_base::{EndpointId, RelayUrl, SecretKey};
+use iroh_base::{RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay, PingTracker, RelayMap,
-    client::{Client, ConnectError, RecvError, SendError},
+    client::{Client, ConnectError, RecvError},
     protos::{
         handshake,
-        relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, Status},
+        relay::{ClientToRelayMsg, RelayToClientMsg, Status},
     },
 };
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
-    FuturesUnorderedBounded, MaybeFuture, SinkExt, StreamExt,
+    SinkExt,
     task::{JoinError, JoinSet},
     time::{self, Duration, Instant, MissedTickBehavior},
 };
 use n0_watcher::Watchable;
 use netwatch::interfaces;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
+#[cfg(test)]
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, debug, error, event, info, info_span, trace, warn};
 use url::Url;
 
+use super::{RelayConnection, RelayConnections, RelayEvent, RelaySocket, RelayStream, Socket};
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{endpoint::RelayStatus, net_report::Report, socket::Metrics as SocketMetrics};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
-const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
+pub(super) const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
 
 /// Interval in which we ping the relay server to ensure the connection is alive.
 ///
@@ -73,37 +75,21 @@ const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
 /// chance of recovering.
 const PING_INTERVAL: Duration = Duration::from_secs(15);
 
-/// Number of datagrams which can be sent to the relay server in one batch.
-///
-/// This means while this batch is sending to the server no other relay protocol frames can
-/// be sent to the server, e.g. no Ping frames or so.  While the maximum packet size is
-/// rather large, each item can typically be expected to up to 1500 or the max GSO size.
-const SEND_DATAGRAM_BATCH_SIZE: usize = 20;
-
 /// Timeout for establishing the relay connection.
 ///
 /// This includes DNS, dialing the server, upgrading the connection, and completing the
 /// handshake.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Time after which the [`ActiveRelayActor`] will drop undeliverable datagrams.
-///
-/// When the [`ActiveRelayActor`] is not connected it can not deliver datagrams.  However it
-/// will still receive datagrams to send from the [`RelayActor`].  If connecting takes
-/// longer than this timeout datagrams will be dropped.
-///
-/// This value is set to 3 times the QUIC initial Probe Timeout (PTO).
-const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_secs(3);
-
 /// An actor which handles the connection to a single relay server.
 ///
 /// It is responsible for maintaining the connection to the relay server and handling all
 /// communication with it.
 ///
-/// The actor shuts down itself on inactivity: inactivity is determined when no more
-/// datagrams are being queued to send.
+/// The actor shuts down itself on inactivity: inactivity is determined when no sender
+/// used the [`RelayConnection`] for a while.
 ///
-/// This actor has 3 main states it can be in, each has it's dedicated run loop:
+/// This actor has 2 main states it can be in, each has it's dedicated run loop:
 ///
 /// - Dialing the relay server.
 ///
@@ -112,28 +98,16 @@ const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_secs(3);
 ///
 /// - Connected to the relay server.
 ///
-///   This state allows receiving from the relay server, though sending is idle in this
-///   state.  See [`ActiveRelayActor::run_connected`].
-///
-/// - Sending to the relay server.
-///
-///   This is a sub-state of `connected` so the actor can still be receiving from the relay
-///   server at this time.  However it is actively sending data to the server so can not
-///   consume any further items from inboxes which will result in sending more data to the
-///   server until the actor goes back to the `connected` state.
+///   The noq socket of the [`RelayConnection`] receives the datagrams, and the senders send them.
+///   The actor flushes the sink, answers and sends pings, and handles the other frames.
+///   See [`ActiveRelayActor::run_connected`].
 ///
 /// All these are driven from the top-level [`ActiveRelayActor::run`] loop.
 #[derive(Debug)]
 struct ActiveRelayActor {
-    // The inboxes and channels this actor communicates over.
-    /// Inbox for messages which should be handled without any blocking.
-    prio_inbox: mpsc::Receiver<ActiveRelayPrioMessage>,
-    /// Inbox for messages which involve sending to the relay server.
     inbox: mpsc::Receiver<ActiveRelayMessage>,
-    /// Queue for received relay datagrams.
-    relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
-    /// Channel on which we queue packets to send to the relay.
-    relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
+    /// The connection this actor connects.
+    connection: Arc<RelayConnection>,
 
     // Other actor state.
     /// The relay server for this actor.
@@ -145,11 +119,11 @@ struct ActiveRelayActor {
     /// The home relay server needs to maintain it's connection to the relay server, even if
     /// the relay actor is otherwise idle.
     is_home_relay: bool,
-    /// When this expires the actor has been idle and should shut down.
+    /// When this expires the actor may have been idle and should shut down.
     ///
     /// Unless it is managing the home relay connection.  Inactivity is only tracked on the
-    /// last datagram sent to the relay, received datagrams will trigger QUIC ACKs which is
-    /// sufficient to keep active connections open.
+    /// last datagram sent to the relay, see [`RelayConnection::last_used`]. Received datagrams will
+    /// trigger QUIC ACKs which is sufficient to keep active connections open.
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
@@ -176,25 +150,11 @@ enum ActiveRelayMessage {
     PingServer(oneshot::Sender<()>),
 }
 
-/// Messages for the [`ActiveRelayActor`] which should never block.
-///
-/// Most messages in the [`ActiveRelayMessage`] enum trigger sending to the relay server,
-/// which can be blocking.  So the actor may not always be processing that inbox.  Messages
-/// here are processed immediately.
-#[derive(Debug)]
-enum ActiveRelayPrioMessage {
-    /// Returns whether or not this relay can reach the EndpointId.
-    HasEndpointRoute(EndpointId, oneshot::Sender<bool>),
-}
-
 /// Configuration needed to start an [`ActiveRelayActor`].
 #[derive(Debug)]
 struct ActiveRelayActorOptions {
-    url: RelayUrl,
-    prio_inbox_: mpsc::Receiver<ActiveRelayPrioMessage>,
     inbox: mpsc::Receiver<ActiveRelayMessage>,
-    relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
-    relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
+    connection: Arc<RelayConnection>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
     metrics: Arc<SocketMetrics>,
@@ -246,7 +206,7 @@ enum RunError {
     #[error("Client stream write failed")]
     ClientStreamWrite {
         #[error(std_err)]
-        source: SendError,
+        source: io::Error,
     },
 }
 
@@ -262,22 +222,18 @@ enum DialError {
 impl ActiveRelayActor {
     fn new(opts: ActiveRelayActorOptions) -> Self {
         let ActiveRelayActorOptions {
-            url,
-            prio_inbox_: prio_inbox,
             inbox,
-            relay_datagrams_send,
-            relay_datagrams_recv,
+            connection,
             connection_opts,
             stop_token,
             metrics,
             my_relay,
         } = opts;
+        let url = connection.url().clone();
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
-            prio_inbox,
             inbox,
-            relay_datagrams_recv,
-            relay_datagrams_send,
+            connection,
             url,
             relay_client_builder,
             is_home_relay: false,
@@ -354,38 +310,17 @@ impl ActiveRelayActor {
         debug!("exiting");
     }
 
-    /// Waits out a reconnect backoff delay while still answering priority messages.
-    ///
-    /// Other active relays may query [`ActiveRelayPrioMessage::HasEndpointRoute`] on this
-    /// relay while it is backing off, e.g. when [`RelayActor`] is looking for an existing
-    /// relay connection to an endpoint. Answering immediately (with `false`, since a
-    /// disconnected relay cannot have an endpoint route) keeps that lookup from stalling
-    /// for however long is left of this relay's own unrelated backoff.
+    /// Waits out a reconnect backoff delay.
     ///
     /// Returns `false` if the actor should shut down instead of retrying.
     async fn sleep_backoff(&mut self, delay: Duration) -> bool {
-        let sleep = time::sleep(delay);
-        tokio::pin!(sleep);
-        loop {
-            tokio::select! {
-                biased;
-                _ = self.stop_token.cancelled() => {
-                    debug!("Shutdown.");
-                    return false;
-                }
-                msg = self.prio_inbox.recv() => {
-                    let Some(msg) = msg else {
-                        warn!("Priority inbox closed, shutdown.");
-                        return false;
-                    };
-                    match msg {
-                        ActiveRelayPrioMessage::HasEndpointRoute(_peer, sender) => {
-                            sender.send(false).ok();
-                        }
-                    }
-                }
-                _ = &mut sleep => return true,
+        tokio::select! {
+            biased;
+            _ = self.stop_token.cancelled() => {
+                debug!("Shutdown.");
+                false
             }
+            _ = time::sleep(delay) => true,
         }
     }
 
@@ -426,10 +361,16 @@ impl ActiveRelayActor {
         res
     }
 
-    fn reset_inactive_timeout(&mut self) {
-        self.inactive_timeout
-            .as_mut()
-            .reset(Instant::now() + RELAY_INACTIVE_CLEANUP_TIME);
+    /// Returns whether the connection was idle long enough, or else extends the timeout.
+    ///
+    /// Called when [`Self::inactive_timeout`] expires.
+    fn check_inactive(&mut self) -> bool {
+        let deadline = self.connection.last_used() + RELAY_INACTIVE_CLEANUP_TIME;
+        if deadline <= Instant::now() {
+            return true;
+        }
+        self.inactive_timeout.as_mut().reset(deadline);
+        false
     }
 
     fn set_home_relay(&mut self, is_home: bool) {
@@ -451,16 +392,6 @@ impl ActiveRelayActor {
     async fn run_dialing(&mut self) -> Option<Result<iroh_relay::client::Client, DialError>> {
         trace!("Actor loop: connecting to relay.");
 
-        // We regularly flush the relay_datagrams_send queue so it is not full of stale
-        // packets while reconnecting.  Those datagrams are dropped and the QUIC congestion
-        // controller will have to handle this (DISCO packets do not yet have retry).  This
-        // is not an ideal mechanism, an alternative approach would be to use
-        // e.g. ConcurrentQueue with force_push, though now you might still send very stale
-        // packets when eventually connected.  So perhaps this is a reasonable compromise.
-        let mut send_datagram_flush = time::interval(UNDELIVERABLE_DATAGRAM_TIMEOUT);
-        send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        send_datagram_flush.reset(); // Skip the immediate interval
-
         let dialing_fut = self.dial_relay();
         tokio::pin!(dialing_fut);
         loop {
@@ -469,17 +400,6 @@ impl ActiveRelayActor {
                 _ = self.stop_token.cancelled() => {
                     debug!("Shutdown.");
                     break None;
-                }
-                msg = self.prio_inbox.recv() => {
-                    let Some(msg) = msg else {
-                        warn!("Priority inbox closed, shutdown.");
-                        break None;
-                    };
-                    match msg {
-                        ActiveRelayPrioMessage::HasEndpointRoute(_peer, sender) => {
-                            sender.send(false).ok();
-                        }
-                    }
                 }
                 res = &mut dialing_fut => {
                     match res {
@@ -511,19 +431,11 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                _ = send_datagram_flush.tick() => {
-                    self.reset_inactive_timeout();
-                    let mut logged = false;
-                    while self.relay_datagrams_send.try_recv().is_ok() {
-                        if !logged {
-                            debug!(?UNDELIVERABLE_DATAGRAM_TIMEOUT, "Dropping datagrams to send.");
-                            logged = true;
-                        }
-                    }
-                }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
-                    debug!(?RELAY_INACTIVE_CLEANUP_TIME, "Inactive, exiting.");
-                    break None;
+                    if self.check_inactive() {
+                        debug!(?RELAY_INACTIVE_CLEANUP_TIME, "Inactive, exiting.");
+                        break None;
+                    }
                 }
             }
         }
@@ -565,13 +477,20 @@ impl ActiveRelayActor {
             home_relay = self.is_home_relay,
         );
 
-        let (mut client_stream, client_sink) = client.split();
-        let mut client_sink = client_sink.sink_map_err(|e| e!(RunError::ClientStreamWrite, e));
+        let (client_stream, client_sink) = client.split();
+        let local_addr = client_stream.local_addr();
+        let (events_tx, mut events) = mpsc::channel(RELAY_EVENTS_CAPACITY);
+        let connection = self.connection.clone();
+        connection.connect(
+            Box::pin(client_sink.sink_map_err(io::Error::other)),
+            RelayStream {
+                stream: client_stream,
+                events: events_tx,
+            },
+        );
 
         let mut state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),
-            endpoints_present: BTreeSet::new(),
-            last_packet_src: None,
             pong_pending: None,
             established: false,
             rate_limited: false,
@@ -579,19 +498,16 @@ impl ActiveRelayActor {
             test_pong: None,
         };
 
-        // A buffer to pass through multiple datagrams at once as an optimisation.
-        let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
-
         // Regularly send pings so we know the connection is healthy.
         // The first ping will be sent immediately.
         let mut ping_interval = time::interval(PING_INTERVAL);
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let res = loop {
-            if let Some(data) = state.pong_pending.take() {
-                let fut = client_sink.send(ClientToRelayMsg::Pong(data));
-                self.run_sending(fut, &mut state, &mut client_stream)
-                    .await?;
+            if let Some(data) = state.pong_pending.take()
+                && let Err(err) = send_msg(&connection, ClientToRelayMsg::Pong(data)).await
+            {
+                break Err(err);
             }
             tokio::select! {
                 biased;
@@ -599,16 +515,9 @@ impl ActiveRelayActor {
                     debug!("Shutdown.");
                     break Ok(());
                 }
-                msg = self.prio_inbox.recv() => {
-                    let Some(msg) = msg else {
-                        warn!("Priority inbox closed, shutdown.");
-                        break Ok(());
-                    };
-                    match msg {
-                        ActiveRelayPrioMessage::HasEndpointRoute(peer, sender) => {
-                            let has_peer = state.endpoints_present.contains(&peer);
-                            sender.send(has_peer).ok();
-                        }
+                res = poll_fn(|cx| connection.poll_flush(cx)) => {
+                    if let Err(err) = res {
+                        break Err(e!(RunError::ClientStreamWrite, err));
                     }
                 }
                 _ = state.ping_tracker.timeout() => {
@@ -616,8 +525,9 @@ impl ActiveRelayActor {
                 }
                 _ = ping_interval.tick() => {
                     let data = state.ping_tracker.new_ping();
-                    let fut = client_sink.send(ClientToRelayMsg::Ping(data));
-                    self.run_sending(fut, &mut state, &mut client_stream).await?;
+                    if let Err(err) = send_msg(&connection, ClientToRelayMsg::Ping(data)).await {
+                        break Err(err);
+                    }
                 }
                 msg = self.inbox.recv() => {
                     let Some(msg) = msg else {
@@ -637,11 +547,13 @@ impl ActiveRelayActor {
                             }
                         }
                         ActiveRelayMessage::CheckConnection { local_ips } => {
-                            match client_stream.local_addr() {
+                            match local_addr {
                                 Some(addr) if local_ips.contains(&addr.ip()) => {
                                     let data = state.ping_tracker.new_ping();
-                                    let fut = client_sink.send(ClientToRelayMsg::Ping(data));
-                                    self.run_sending(fut, &mut state, &mut client_stream).await?;
+                                    let ping = ClientToRelayMsg::Ping(data);
+                                    if let Err(err) = send_msg(&connection, ping).await {
+                                        break Err(err);
+                                    }
                                 }
                                 Some(_) => break Err(e!(RunError::LocalIpInvalid)),
                                 None => break Err(e!(RunError::LocalAddrMissing)),
@@ -649,62 +561,41 @@ impl ActiveRelayActor {
                         }
                         #[cfg(test)]
                         ActiveRelayMessage::GetLocalAddr(sender) => {
-                            let addr = client_stream.local_addr();
-                            sender.send(addr).ok();
+                            sender.send(local_addr).ok();
                         }
                         #[cfg(test)]
                         ActiveRelayMessage::PingServer(sender) => {
                             let data = rand::random();
                             state.test_pong = Some((data, sender));
-                            let fut = client_sink.send(ClientToRelayMsg::Ping(data));
-                            self.run_sending(fut, &mut state, &mut client_stream).await?;
+                            if let Err(err) = send_msg(&connection, ClientToRelayMsg::Ping(data)).await {
+                                break Err(err);
+                            }
                         }
                     }
                 }
-                count = self.relay_datagrams_send.recv_many(
-                    &mut send_datagrams_buf,
-                    SEND_DATAGRAM_BATCH_SIZE,
-                ) => {
-                    if count == 0 {
-                        warn!("Datagram inbox closed, shutdown");
-                        break Ok(());
-                    };
-                    self.reset_inactive_timeout();
-                    // TODO(frando): can we avoid the clone here?
-                    let metrics = self.metrics.clone();
-                    let packet_iter = send_datagrams_buf.drain(..).map(|item| {
-                        metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
-                        Ok(ClientToRelayMsg::Datagrams {
-                            dst_endpoint_id: item.remote_endpoint,
-                            datagrams: item.datagrams,
-                        })
-                    });
-                    let mut packet_stream = n0_future::stream::iter(packet_iter);
-                    let fut = client_sink.send_all(&mut packet_stream);
-                    self.run_sending(fut, &mut state, &mut client_stream).await?;
-                }
-                msg = client_stream.next() => {
-                    let Some(msg) = msg else {
-                        break Err(e!(RunError::StreamClosedServer));
-                    };
-                    match msg {
-                        Ok(msg) => {
-                            self.handle_relay_msg(msg, &mut state);
-                            // reset the ping timer, we have just received a message
-                            ping_interval.reset();
-                        },
-                        Err(err) => break Err(e!(RunError::ClientStreamRead, err)),
+                event = events.recv() => {
+                    match event {
+                        Some(RelayEvent::Frame(msg)) => self.handle_relay_msg(msg, &mut state),
+                        Some(RelayEvent::Closed(Some(err))) => {
+                            break Err(e!(RunError::ClientStreamRead, err));
+                        }
+                        Some(RelayEvent::Closed(None)) | None => {
+                            break Err(e!(RunError::StreamClosedServer));
+                        }
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
-                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting (running).");
-                    break Ok(());
+                    if self.check_inactive() {
+                        debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting.");
+                        break Ok(());
+                    }
                 }
             }
         };
 
-        if res.is_ok()
-            && let Err(err) = client_sink.close().await
+        if let Some(mut sink) = connection.disconnect()
+            && res.is_ok()
+            && let Err(err) = sink.close().await
         {
             debug!("Failed to close client sink gracefully: {err:#}");
         }
@@ -714,34 +605,10 @@ impl ActiveRelayActor {
 
     fn handle_relay_msg(&mut self, msg: RelayToClientMsg, state: &mut ConnectedRelayState) {
         match msg {
-            RelayToClientMsg::Datagrams {
-                remote_endpoint_id,
-                datagrams,
-            } => {
-                trace!(len = datagrams.contents.len(), "received msg");
-                // If this is a new sender, register a route for this peer.
-                if state
-                    .last_packet_src
-                    .as_ref()
-                    .map(|p| *p != remote_endpoint_id)
-                    .unwrap_or(true)
-                {
-                    // Avoid map lookup with high throughput single peer.
-                    state.last_packet_src = Some(remote_endpoint_id);
-                    state.endpoints_present.insert(remote_endpoint_id);
-                }
-
-                if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
-                    url: self.url.clone(),
-                    src: remote_endpoint_id,
-                    datagrams,
-                }) {
-                    warn!("Dropping received relay packet: {err:#}");
-                }
+            RelayToClientMsg::Datagrams { .. } => {
+                // The noq socket of the relay receives these.
             }
-            RelayToClientMsg::EndpointGone(endpoint_id) => {
-                state.endpoints_present.remove(&endpoint_id);
-            }
+            RelayToClientMsg::EndpointGone(_) => {}
             RelayToClientMsg::Ping(data) => state.pong_pending = Some(data),
             RelayToClientMsg::Pong(data) => {
                 #[cfg(test)]
@@ -782,95 +649,27 @@ impl ActiveRelayActor {
             ),
         }
     }
+}
 
-    /// Run the actor main loop while sending to the relay server.
-    ///
-    /// While sending the actor should not read any inboxes which will give it more things
-    /// to send to the relay server.
-    ///
-    /// # Returns
-    ///
-    /// On `Err` the relay connection should be disconnected.  An `Ok` return means either
-    /// the actor should shut down, consult the [`ActiveRelayActor::stop_token`] and
-    /// [`ActiveRelayActor::inactive_timeout`] for this, or the send was successful.
-    #[instrument(name = "tx", skip_all)]
-    #[allow(clippy::result_large_err)]
-    async fn run_sending<T>(
-        &mut self,
-        sending_fut: impl Future<Output = Result<T, RunError>>,
-        state: &mut ConnectedRelayState,
-        client_stream: &mut iroh_relay::client::ClientStream,
-    ) -> Result<(), RelayConnectionError> {
-        // we use the same time as for our ping interval
-        let send_timeout = PING_INTERVAL;
+/// How many frames other than datagrams the noq socket may queue for the actor.
+const RELAY_EVENTS_CAPACITY: usize = 64;
 
-        let mut timeout = pin!(time::sleep(send_timeout));
-        let mut sending_fut = pin!(sending_fut);
-        let res = loop {
-            tokio::select! {
-                biased;
-                _ = self.stop_token.cancelled() => {
-                    break Ok(());
-                }
-                _ = &mut timeout => {
-                    break Err(e!(RunError::SendTimeout));
-                }
-                msg = self.prio_inbox.recv() => {
-                    let Some(msg) = msg else {
-                        warn!("Priority inbox closed, shutdown.");
-                        break Ok(());
-                    };
-                    match msg {
-                        ActiveRelayPrioMessage::HasEndpointRoute(peer, sender) => {
-                            let has_peer = state.endpoints_present.contains(&peer);
-                            sender.send(has_peer).ok();
-                        }
-                    }
-                }
-                res = &mut sending_fut => {
-                    match res {
-                        Ok(_) => break Ok(()),
-                        Err(err) => break Err(err),
-                    }
-                }
-                _ = state.ping_tracker.timeout() => {
-                    break Err(e!(RunError::PingTimeout));
-                }
-                // No need to read the inbox or datagrams to send.
-                msg = client_stream.next() => {
-                    let Some(msg) = msg else {
-                        break Err(e!(RunError::StreamClosedServer));
-                    };
-                    match msg {
-                        Ok(msg) => self.handle_relay_msg(msg, state),
-                        Err(err) => break Err(e!(RunError::ClientStreamRead, err)),
-                    }
-                }
-                _ = &mut self.inactive_timeout, if !self.is_home_relay => {
-                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting (sending).");
-                    break Ok(());
-                }
-            }
-        };
-        res.map_err(|err| state.map_err(err))
+/// Sends a frame to the relay server, failing if that takes longer than [`PING_INTERVAL`].
+async fn send_msg(connection: &RelayConnection, msg: ClientToRelayMsg) -> Result<(), RunError> {
+    let mut msg = Some(msg);
+    let send = poll_fn(|cx| connection.poll_send(cx, || msg.take().expect("sent once")));
+    match time::timeout(PING_INTERVAL, send).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(e!(RunError::ClientStreamWrite, err)),
+        Err(_) => Err(e!(RunError::SendTimeout)),
     }
 }
 
-/// Shared state when the [`ActiveRelayActor`] is connected to a relay server.
-///
-/// Common state between [`ActiveRelayActor::run_connected`] and
-/// [`ActiveRelayActor::run_sending`].
+/// State of the [`ActiveRelayActor`] while connected to a relay server.
 #[derive(Debug)]
 struct ConnectedRelayState {
     /// Tracks pings we have sent, awaits pong replies.
     ping_tracker: PingTracker,
-    /// Endpoints which are reachable via this relay server.
-    endpoints_present: BTreeSet<EndpointId>,
-    /// The [`EndpointId`] from whom we received the last packet.
-    ///
-    /// This is to avoid a slower lookup in the [`ConnectedRelayState::endpoints_present`] map
-    /// when we are only communicating to a single remote endpoint.
-    last_packet_src: Option<EndpointId>,
     /// A pong we need to send ASAP.
     pong_pending: Option<[u8; 8]>,
     /// Whether the connection is to be considered established.
@@ -896,6 +695,11 @@ impl ConnectedRelayState {
 }
 
 pub(super) enum RelayActorMessage {
+    /// Adds a noq socket to `endpoint` for each relay server, from now on.
+    StartSockets {
+        endpoint: noq::Endpoint,
+        sock: Arc<Socket>,
+    },
     MaybeCloseRelaysOnRebind,
     NetworkChange {
         report: Report,
@@ -907,20 +711,12 @@ pub(super) enum RelayActorMessage {
     CheckConnectionAfterNetworkChange,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct RelaySendItem {
-    /// The destination for the datagrams.
-    pub(crate) remote_endpoint: EndpointId,
-    /// The home relay of the remote endpoint.
-    pub(crate) url: RelayUrl,
-    /// One or more datagrams to send.
-    pub(crate) datagrams: Datagrams,
-}
-
 pub(super) struct RelayActor {
     config: Config,
-    /// Queue on which to put received datagrams.
-    relay_datagram_recv_queue: mpsc::Sender<RelayRecvDatagram>,
+    /// Where to add the noq sockets of the relay servers, once known.
+    sockets: Option<(noq::Endpoint, Arc<Socket>)>,
+    /// How many of the connections have their noq socket.
+    sockets_added: usize,
     /// The actors managing each currently used relay server.
     ///
     /// These actors will exit when they have any inactivity.  Otherwise they will keep
@@ -946,6 +742,8 @@ pub(crate) struct Config {
     /// Per-relay configuration. Consulted when starting a connection to
     /// look up the auth token and any future per-relay options.
     pub relay_map: RelayMap,
+    /// The connections, one per relay server.
+    pub connections: RelayConnections,
 }
 
 /// Connection state of the home relay.
@@ -1113,29 +911,19 @@ impl HomeRelayWatch {
 }
 
 impl RelayActor {
-    pub(super) fn new(
-        config: Config,
-        relay_datagram_recv_queue: mpsc::Sender<RelayRecvDatagram>,
-        cancel_token: CancellationToken,
-    ) -> Self {
+    pub(super) fn new(config: Config, cancel_token: CancellationToken) -> Self {
         Self {
             config,
-            relay_datagram_recv_queue,
+            sockets: None,
+            sockets_added: 0,
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
         }
     }
 
-    pub(super) async fn run(
-        mut self,
-        mut receiver: mpsc::Receiver<RelayActorMessage>,
-        mut datagram_send_channel: mpsc::Receiver<RelaySendItem>,
-    ) {
-        // When this future is present, it is sending pending datagrams to an
-        // ActiveRelayActor.  We can not process further datagrams during this time.
-        let mut datagram_send_fut = std::pin::pin!(MaybeFuture::None);
-
+    pub(super) async fn run(mut self, mut receiver: mpsc::Receiver<RelayActorMessage>) {
+        let connections = self.config.connections.clone();
         loop {
             tokio::select! {
                 biased;
@@ -1155,23 +943,7 @@ impl RelayActor {
                     let cancel_token = self.cancel_token.child_token();
                     cancel_token.run_until_cancelled(self.handle_msg(msg)).await;
                 }
-                // Only poll for new datagrams if we are not blocked on sending them.
-                item = datagram_send_channel.recv(), if datagram_send_fut.is_none() => {
-                    let Some(item) = item else {
-                        debug!("Datagram send channel dropped, shutting down.");
-                        break;
-                    };
-                    let token = self.cancel_token.child_token();
-                    if let Some(Some(fut)) = token.run_until_cancelled(
-                        self.try_send_datagram(item)
-                    ).await {
-                        datagram_send_fut.as_mut().set_future(fut);
-                    }
-                }
-                // Only poll this future if it is in use.
-                _ = &mut datagram_send_fut, if datagram_send_fut.is_some() => {
-                    datagram_send_fut.as_mut().set_none();
-                }
+                _ = connections.changed() => self.sync_connections(),
             }
         }
 
@@ -1186,6 +958,10 @@ impl RelayActor {
 
     async fn handle_msg(&mut self, msg: RelayActorMessage) {
         match msg {
+            RelayActorMessage::StartSockets { endpoint, sock } => {
+                self.sockets = Some((endpoint, sock));
+                self.sync_connections();
+            }
             RelayActorMessage::NetworkChange { report } => {
                 self.on_network_change(report).await;
             }
@@ -1198,33 +974,25 @@ impl RelayActor {
         }
     }
 
-    /// Sends datagrams to the correct [`ActiveRelayActor`], or returns a future.
-    ///
-    /// If the datagram can not be sent immediately, because the destination channel is
-    /// full, a future is returned that will complete once the datagrams have been sent to
-    /// the [`ActiveRelayActor`].
-    async fn try_send_datagram(
-        &mut self,
-        item: RelaySendItem,
-    ) -> Option<impl Future<Output = ()> + use<>> {
-        let url = item.url.clone();
-        let handle = self
-            .active_relay_handle_for_endpoint(&item.url, &item.remote_endpoint)
-            .await;
-        match handle.datagrams_send_queue.try_send(item) {
-            Ok(()) => None,
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!(?url, "Dropped datagram(s): ActiveRelayActor closed.");
-                None
-            }
-            Err(mpsc::error::TrySendError::Full(item)) => {
-                let sender = handle.datagrams_send_queue.clone();
-                let fut = async move {
-                    if sender.send(item).await.is_err() {
-                        warn!(?url, "Dropped datagram(s): ActiveRelayActor closed.");
+    /// Adds a noq socket for each new connection, and connects those that asked to.
+    fn sync_connections(&mut self) {
+        let connections = self.config.connections.all();
+        if let Some((endpoint, sock)) = &self.sockets {
+            for connection in &connections[self.sockets_added..] {
+                let socket = RelaySocket::new(sock.clone(), connection.clone());
+                let route = socket.route();
+                match endpoint.add_socket(Box::new(socket), vec![route]) {
+                    Ok(()) => debug!(url = %connection.url(), "added relay socket"),
+                    Err(err) => {
+                        warn!(url = %connection.url(), "failed to add relay socket: {err:#}")
                     }
-                };
-                Some(fut)
+                }
+            }
+            self.sockets_added = connections.len();
+        }
+        for connection in connections {
+            if connection.take_connect_request() {
+                self.active_relay_handle(connection.url().clone());
             }
         }
     }
@@ -1271,53 +1039,6 @@ impl RelayActor {
         self.active_relay_handle(home_url);
     }
 
-    /// Returns the handle for the [`ActiveRelayActor`] to reach `remote_endpoint`.
-    ///
-    /// The endpoint is expected to be reachable on `url`, but if no [`ActiveRelayActor`] for
-    /// `url` exists but another existing [`ActiveRelayActor`] already knows about the endpoint,
-    /// that other endpoint is used.
-    async fn active_relay_handle_for_endpoint(
-        &mut self,
-        url: &RelayUrl,
-        remote_endpoint: &EndpointId,
-    ) -> ActiveRelayHandle {
-        if let Some(handle) = self.active_relays.get(url) {
-            return handle.clone();
-        }
-
-        let mut found_relay: Option<RelayUrl> = None;
-        // If we don't have an open connection to the remote endpoint's home relay, see if
-        // we have an open connection to a relay endpoint where we'd heard from that peer
-        // already.  E.g. maybe they dialed our home relay recently.
-        {
-            // Futures which return Some(RelayUrl) if the relay knows about the remote endpoint.
-            let check_futs = self.active_relays.iter().map(|(url, handle)| async move {
-                let (tx, rx) = oneshot::channel();
-                handle
-                    .prio_inbox_addr
-                    .send(ActiveRelayPrioMessage::HasEndpointRoute(
-                        *remote_endpoint,
-                        tx,
-                    ))
-                    .await
-                    .ok();
-                match rx.await {
-                    Ok(true) => Some(url.clone()),
-                    _ => None,
-                }
-            });
-            let mut futures = FuturesUnorderedBounded::from_iter(check_futs);
-            while let Some(maybe_url) = futures.next().await {
-                if maybe_url.is_some() {
-                    found_relay = maybe_url;
-                    break;
-                }
-            }
-        }
-        let url = found_relay.unwrap_or(url.clone());
-        self.active_relay_handle(url)
-    }
-
     /// Returns the handle of the [`ActiveRelayActor`].
     fn active_relay_handle(&mut self, url: RelayUrl) -> ActiveRelayHandle {
         match self.active_relays.get(&url) {
@@ -1356,17 +1077,11 @@ impl RelayActor {
             auth_token,
         };
 
-        // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
-        let (send_datagram_tx, send_datagram_rx) = mpsc::channel(64);
-        let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(32);
         let (inbox_tx, inbox_rx) = mpsc::channel(64);
         let span = info_span!("active-relay", %url);
         let opts = ActiveRelayActorOptions {
-            url,
-            prio_inbox_: prio_inbox_rx,
             inbox: inbox_rx,
-            relay_datagrams_send: send_datagram_rx,
-            relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
+            connection: self.config.connections.get(&url),
             connection_opts,
             stop_token: self.cancel_token.child_token(),
             metrics: self.config.metrics.clone(),
@@ -1380,9 +1095,7 @@ impl RelayActor {
             .instrument(span),
         );
         let handle = ActiveRelayHandle {
-            prio_inbox_addr: prio_inbox_tx,
             inbox_addr: inbox_tx,
-            datagrams_send_queue: send_datagram_tx,
         };
         self.log_active_relay();
         handle
@@ -1490,24 +1203,13 @@ fn log_active_relay_task_result(res: Result<(), JoinError>) {
 /// Handle to one [`ActiveRelayActor`].
 #[derive(Debug, Clone)]
 struct ActiveRelayHandle {
-    prio_inbox_addr: mpsc::Sender<ActiveRelayPrioMessage>,
     inbox_addr: mpsc::Sender<ActiveRelayMessage>,
-    datagrams_send_queue: mpsc::Sender<RelaySendItem>,
-}
-
-/// A single datagram received from a relay server.
-///
-/// This could be either a QUIC or DISCO packet.
-#[derive(Debug)]
-pub(crate) struct RelayRecvDatagram {
-    pub(crate) url: RelayUrl,
-    pub(crate) src: EndpointId,
-    pub(crate) datagrams: Datagrams,
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
+        future::poll_fn,
         sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
@@ -1515,28 +1217,31 @@ mod tests {
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use iroh_relay::{
         PingTracker,
-        protos::relay::Datagrams,
         tls::{CaTlsConfig, default_provider},
     };
-    use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_tracing_test::traced_test;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, info, info_span};
 
     use super::{
-        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        Config, RELAY_INACTIVE_CLEANUP_TIME, RelayActor, RelayConnectionOptions, RelayMap,
-        RelayRecvDatagram, RelaySendItem, UNDELIVERABLE_DATAGRAM_TIMEOUT,
+        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, Config,
+        RELAY_INACTIVE_CLEANUP_TIME, RelayActor, RelayConnection, RelayConnectionOptions,
+        RelayConnections, RelayMap,
     };
-    use crate::{dns::DnsResolver, metrics::SocketMetrics, test_utils};
+    use crate::{
+        dns::DnsResolver,
+        metrics::SocketMetrics,
+        socket::transports::{Transmit, relay::RelayDatagramSender},
+        test_utils,
+    };
 
     /// Abort stands in for the runtime drop that triggers this in the wild:
     /// `join_next` yields a cancelled `JoinError` either way.
     #[tokio::test]
     #[traced_test]
     async fn close_all_active_relays_survives_a_cancelled_task() {
-        let (relay_datagram_recv_queue, _recv_rx) = mpsc::channel(1);
         let config = Config {
             my_relay: Default::default(),
             secret_key: SecretKey::from_bytes(&[0u8; 32]),
@@ -1548,9 +1253,9 @@ mod tests {
                 .expect("infallible"),
             metrics: Default::default(),
             relay_map: RelayMap::empty(),
+            connections: Default::default(),
         };
-        let mut actor =
-            RelayActor::new(config, relay_datagram_recv_queue, CancellationToken::new());
+        let mut actor = RelayActor::new(config, CancellationToken::new());
 
         let handle = actor.active_relay_tasks.spawn(std::future::pending::<()>());
         handle.abort();
@@ -1562,25 +1267,23 @@ mod tests {
         assert!(logs_contain("ActiveRelayActor cancelled"));
     }
 
-    /// Starts a new [`ActiveRelayActor`].
-    #[allow(clippy::too_many_arguments)]
+    /// Returns a new connection to `url`.
+    fn test_connection(url: &RelayUrl) -> Arc<RelayConnection> {
+        RelayConnections::default().get(url)
+    }
+
+    /// Starts a new [`ActiveRelayActor`] for `connection`.
     fn start_active_relay_actor(
         secret_key: SecretKey,
         stop_token: CancellationToken,
-        url: RelayUrl,
-        prio_inbox_rx: mpsc::Receiver<ActiveRelayPrioMessage>,
+        connection: Arc<RelayConnection>,
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
-        relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
-        relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
         metrics: Arc<SocketMetrics>,
         span: tracing::Span,
     ) -> AbortOnDropHandle<()> {
         let opts = ActiveRelayActorOptions {
-            url,
-            prio_inbox_: prio_inbox_rx,
             inbox: inbox_rx,
-            relay_datagrams_send,
-            relay_datagrams_recv,
+            connection,
             connection_opts: RelayConnectionOptions {
                 secret_key,
                 dns_resolver: DnsResolver::new(),
@@ -1599,6 +1302,33 @@ mod tests {
         AbortOnDropHandle::new(task)
     }
 
+    /// Receives one datagram batch, and returns its source and contents.
+    async fn recv_datagram(connection: &RelayConnection) -> (EndpointId, Vec<u8>) {
+        let (src, datagrams) = poll_fn(|cx| connection.poll_recv(cx)).await;
+        (src, datagrams.contents.to_vec())
+    }
+
+    /// Receives on `connection` like its noq socket would, which also reads the other frames.
+    fn spawn_receiver(connection: Arc<RelayConnection>) -> AbortOnDropHandle<()> {
+        AbortOnDropHandle::new(tokio::spawn(async move {
+            loop {
+                recv_datagram(&connection).await;
+            }
+        }))
+    }
+
+    /// Sends one datagram, or drops it if the relay does not connect in time.
+    async fn send_datagram(sender: &mut RelayDatagramSender, dst: EndpointId, contents: &[u8]) {
+        let transmit = Transmit {
+            ecn: None,
+            contents,
+            segment_size: None,
+        };
+        poll_fn(|cx| sender.poll_send(cx, dst, &transmit))
+            .await
+            .ok();
+    }
+
     /// Starts an [`ActiveRelayActor`] as an "iroh echo endpoint".
     ///
     /// This actor will connect to the relay server, pretending to be an iroh endpoint, and echo
@@ -1606,50 +1336,32 @@ mod tests {
     /// [`ActiveRelayActor`] under test to check connectivity works.
     fn start_echo_endpoint(relay_url: RelayUrl) -> (EndpointId, AbortOnDropHandle<()>) {
         let secret_key = SecretKey::from_bytes(&[8u8; 32]);
-        let (recv_datagram_tx, mut recv_datagram_rx) = mpsc::channel(16);
-        let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-        let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
+        let connection = test_connection(&relay_url);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
         let actor_task = start_active_relay_actor(
             secret_key.clone(),
             cancel_token.clone(),
-            relay_url.clone(),
-            prio_inbox_rx,
+            connection.clone(),
             inbox_rx,
-            send_datagram_rx,
-            recv_datagram_tx,
             Default::default(),
             info_span!("echo-endpoint"),
         );
-        let echo_task = tokio::spawn({
-            let relay_url = relay_url.clone();
+        let echo_task = tokio::spawn(
             async move {
+                let mut sender = RelayDatagramSender::new(connection.clone());
                 loop {
-                    let datagram = recv_datagram_rx.recv().await;
-                    if let Some(recv) = datagram {
-                        let RelayRecvDatagram {
-                            url: _,
-                            src,
-                            datagrams,
-                        } = recv;
-                        info!(from = %src.fmt_short(), "Received datagram");
-                        let send = RelaySendItem {
-                            remote_endpoint: src,
-                            url: relay_url.clone(),
-                            datagrams,
-                        };
-                        send_datagram_tx.send(send).await.ok();
-                    }
+                    let (src, contents) = recv_datagram(&connection).await;
+                    info!(from = %src.fmt_short(), "Received datagram");
+                    send_datagram(&mut sender, src, &contents).await;
                 }
             }
-            .instrument(info_span!("echo-task"))
-        });
+            .instrument(info_span!("echo-task")),
+        );
         let echo_task = AbortOnDropHandle::new(echo_task);
         let supervisor_task = tokio::spawn(async move {
             let _guard = cancel_token.drop_guard();
-            // move the inboxes here so it is not dropped, as this stops the actor.
-            let _prio_inbox_tx = prio_inbox_tx;
+            // move the inbox here so it is not dropped, as this stops the actor.
             let _inbox_tx = inbox_tx;
             tokio::select! {
                 biased;
@@ -1667,26 +1379,18 @@ mod tests {
     /// endpoint-under-test and the echo endpoint will be ready and datagrams aren't queued to send
     /// forever, we have to retry a few times.
     async fn send_recv_echo(
-        item: RelaySendItem,
-        tx: &mpsc::Sender<RelaySendItem>,
-        rx: &mut mpsc::Receiver<RelayRecvDatagram>,
+        sender: &mut RelayDatagramSender,
+        connection: &RelayConnection,
+        dst: EndpointId,
+        contents: &[u8],
     ) -> Result<()> {
         tokio::time::timeout(Duration::from_secs(10), async move {
             loop {
-                let res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, async {
-                    tx.send(item.clone()).await.std_context("send item")?;
-                    let RelayRecvDatagram {
-                        url: _,
-                        src: _,
-                        datagrams,
-                    } = rx.recv().await.unwrap();
-
-                    assert_eq!(datagrams, item.datagrams);
-
-                    Ok::<_, Error>(())
-                })
-                .await;
-                if res.is_ok() {
+                send_datagram(sender, dst, contents).await;
+                let res =
+                    tokio::time::timeout(Duration::from_secs(1), recv_datagram(connection)).await;
+                if let Ok((_, received)) = res {
+                    assert_eq!(received, contents);
                     break;
                 }
             }
@@ -1703,37 +1407,23 @@ mod tests {
         let (peer_endpoint, _echo_endpoint_task) = start_echo_endpoint(relay_url.clone());
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let (datagram_recv_tx, mut datagram_recv_rx) = mpsc::channel(16);
-        let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-        let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
+        let connection = test_connection(&relay_url);
+        let mut sender = RelayDatagramSender::new(connection.clone());
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
         let metrics = Arc::new(SocketMetrics::default());
         let task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
-            relay_url.clone(),
-            prio_inbox_rx,
+            connection.clone(),
             inbox_rx,
-            send_datagram_rx,
-            datagram_recv_tx.clone(),
             metrics.clone(),
             info_span!("actor-under-test"),
         );
 
         // Send a datagram to our echo endpoint.
         info!("first echo");
-        let hello_send_item = RelaySendItem {
-            remote_endpoint: peer_endpoint,
-            url: relay_url.clone(),
-            datagrams: Datagrams::from(b"hello"),
-        };
-        send_recv_echo(
-            hello_send_item.clone(),
-            &send_datagram_tx,
-            &mut datagram_recv_rx,
-        )
-        .await?;
+        send_recv_echo(&mut sender, &connection, peer_endpoint, b"hello").await?;
 
         // Now ask to check the connection, triggering a ping but no reconnect.
         let (tx, rx) = oneshot::channel();
@@ -1765,12 +1455,7 @@ mod tests {
 
         // Echo should still work.
         info!("second echo");
-        send_recv_echo(
-            hello_send_item.clone(),
-            &send_datagram_tx,
-            &mut datagram_recv_rx,
-        )
-        .await?;
+        send_recv_echo(&mut sender, &connection, peer_endpoint, b"hello").await?;
 
         // Now ask to check the connection, this will reconnect without pinging because we
         // do not supply any "valid" local IP addresses.
@@ -1787,12 +1472,7 @@ mod tests {
 
         // Echo should still work.
         info!("third echo");
-        send_recv_echo(
-            hello_send_item.clone(),
-            &send_datagram_tx,
-            &mut datagram_recv_rx,
-        )
-        .await?;
+        send_recv_echo(&mut sender, &connection, peer_endpoint, b"hello").await?;
 
         // Shut down the actor.
         cancel_token.cancel();
@@ -1816,20 +1496,16 @@ mod tests {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let (datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(16);
-        let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-        let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
         let metrics = Arc::new(SocketMetrics::default());
+        let connection = test_connection(&relay_url);
+        let _receiver = spawn_receiver(connection.clone());
         let mut task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
-            relay_url,
-            prio_inbox_rx,
+            connection,
             inbox_rx,
-            send_datagram_rx,
-            datagram_recv_tx,
             metrics.clone(),
             info_span!("actor-under-test"),
         );
@@ -1927,64 +1603,6 @@ mod tests {
 
         let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
         assert!(res.is_err(), "ping timeout should only happen once");
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_prio_inbox_answered_during_backoff() {
-        tokio::time::pause();
-        let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let peer = SecretKey::from_bytes(&[2u8; 32]).public();
-        let url: RelayUrl = "https://relay.invalid".parse().unwrap();
-        let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
-        let (_inbox_tx, inbox_rx) = mpsc::channel(16);
-        let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-        let (recv_datagram_tx, _recv_datagram_rx) = mpsc::channel(16);
-        let opts = ActiveRelayActorOptions {
-            url,
-            prio_inbox_: prio_inbox_rx,
-            inbox: inbox_rx,
-            relay_datagrams_send: send_datagram_rx,
-            relay_datagrams_recv: recv_datagram_tx,
-            connection_opts: RelayConnectionOptions {
-                secret_key,
-                dns_resolver: DnsResolver::new(),
-                proxy_url: None,
-                prefer_ipv6: Arc::new(AtomicBool::new(true)),
-                tls_config: CaTlsConfig::insecure_skip_verify()
-                    .client_config(default_provider())
-                    .expect("infallible"),
-                auth_token: None,
-            },
-            stop_token: CancellationToken::new(),
-            metrics: Default::default(),
-            my_relay: Default::default(),
-        };
-        let mut actor = ActiveRelayActor::new(opts);
-
-        let backoff = tokio::spawn(async move {
-            let keep_running = actor.sleep_backoff(Duration::from_secs(10)).await;
-            (actor, keep_running)
-        });
-
-        // Query the actor while it waits out the backoff delay. The reply must
-        // arrive well before the delay elapses; before the backoff wait
-        // serviced the priority inbox, this reply only arrived after the
-        // remaining backoff delay (up to 16s).
-        let (tx, rx) = oneshot::channel();
-        prio_inbox_tx
-            .send(ActiveRelayPrioMessage::HasEndpointRoute(peer, tx))
-            .await
-            .expect("actor alive");
-        let reply = tokio::time::timeout(Duration::from_secs(1), rx)
-            .await
-            .expect("no reply within 1s of a 10s backoff")
-            .expect("sender dropped");
-        assert!(!reply, "a disconnected relay has no endpoint routes");
-
-        // The backoff itself still runs to completion.
-        let (_actor, keep_running) = backoff.await.expect("backoff task panicked");
-        assert!(keep_running, "backoff should complete normally");
     }
 
     #[test]

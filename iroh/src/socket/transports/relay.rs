@@ -1,215 +1,105 @@
+//! The relay transport: one noq socket per relay server.
+//!
+//! [`RelayConnections`] holds a [`RelayConnection`] per relay server, created the first time
+//! its URL is used. The relay actor adds a [`RelaySocket`] to the noq endpoint for each one,
+//! and connects it while it is used. Once connected, the noq socket receives straight from
+//! the relay client, and the senders of the noq connections write straight into it.
+
 use std::{
     io,
     num::NonZeroU16,
-    task::{Context, Poll},
+    pin::Pin,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    task::{Context, Poll, Wake, Waker},
 };
 
 use bytes::Bytes;
 use iroh_base::{EndpointId, RelayUrl};
-use iroh_relay::protos::relay::Datagrams;
+use iroh_relay::{
+    client::{ClientStream, RecvError},
+    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+};
 use n0_future::{
-    ready,
+    Sink, Stream,
     task::{self, AbortOnDropHandle},
+    time::{Duration, Instant},
 };
 use n0_watcher::Watcher as _;
-use tokio::sync::mpsc;
-use tokio_util::sync::{CancellationToken, PollSender};
-use tracing::{Instrument, error, info_span, warn};
+use tokio::sync::{Notify, mpsc};
+use tokio_util::sync::CancellationToken;
+use tracing::{Instrument, debug, info_span, warn};
 
-use super::{RecvInfo, Transmit};
-use crate::endpoint::RelayStatus;
+use super::{Socket, Transmit};
+use crate::{endpoint::RelayStatus, socket::Metrics as SocketMetrics};
 
 mod actor;
+mod socket;
 
 pub(crate) use self::actor::{
     Config as RelayActorConfig, HomeRelayWatch, RelayConnectionFailure, RelayConnectionState,
 };
-use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
+use self::{
+    actor::{RelayActor, RelayActorMessage},
+    socket::RelaySocket,
+};
 
 type RelayAddrWatcher =
     n0_watcher::Map<n0_watcher::Direct<Option<RelayStatus>>, Option<(RelayUrl, EndpointId)>>;
 
+/// How long a sender waits for its relay server to connect before it drops a transmit.
+///
+/// This value is set to 3 times the QUIC initial Probe Timeout (PTO).
+const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The send half of a relay connection.
+type RelaySink = Pin<Box<dyn Sink<ClientToRelayMsg, Error = io::Error> + Send>>;
+
 #[derive(Debug)]
 pub(crate) struct RelayTransport {
-    /// Channel on which to send datagrams via a relay server.
-    relay_datagram_send_channel: mpsc::Sender<RelaySendItem>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: HomeRelayWatch,
     my_endpoint_id: EndpointId,
-}
-
-/// The receive half of a [`RelayTransport`], driven by its own noq socket task.
-#[derive(Debug)]
-pub(crate) struct RelayReceiver {
-    /// Queue to receive datagrams from relays for [`noq::AsyncUdpSocket::poll_recv`].
-    relay_datagram_recv_queue: mpsc::Receiver<RelayRecvDatagram>,
-    /// A datagram from the last poll_recv that didn't quite fit our buffers.
-    pending_item: Option<RelayRecvDatagram>,
-}
-
-impl std::fmt::Display for RelayReceiver {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RelayTransport")
-    }
+    connections: RelayConnections,
 }
 
 impl RelayTransport {
-    /// Starts the relay actor and returns the transport and its receive half.
-    pub(crate) fn new(
-        config: RelayActorConfig,
-        cancel_token: CancellationToken,
-    ) -> (Self, RelayReceiver) {
-        let (relay_datagram_send_tx, relay_datagram_send_rx) = mpsc::channel(256);
-
-        let (relay_datagram_recv_tx, relay_datagram_recv_rx) = mpsc::channel(512);
-
+    /// Starts the relay actor.
+    pub(crate) fn new(config: RelayActorConfig, cancel_token: CancellationToken) -> Self {
         let (actor_sender, actor_receiver) = mpsc::channel(256);
-
         let my_endpoint_id = config.secret_key.public();
         let my_relay = config.my_relay.clone();
-
-        let relay_actor = RelayActor::new(config, relay_datagram_recv_tx, cancel_token);
-
+        let connections = config.connections.clone();
+        let relay_actor = RelayActor::new(config, cancel_token);
         let actor_handle = AbortOnDropHandle::new(task::spawn(
-            async move {
-                relay_actor
-                    .run(actor_receiver, relay_datagram_send_rx)
-                    .await;
-            }
-            .instrument(info_span!("relay-actor")),
+            async move { relay_actor.run(actor_receiver).await }
+                .instrument(info_span!("relay-actor")),
         ));
-
-        let transport = Self {
-            relay_datagram_send_channel: relay_datagram_send_tx,
+        Self {
             actor_sender,
             _actor_handle: actor_handle,
             my_relay,
             my_endpoint_id,
-        };
-        let recv = RelayReceiver {
-            relay_datagram_recv_queue: relay_datagram_recv_rx,
-            pending_item: None,
-        };
-        (transport, recv)
-    }
-
-    pub(crate) fn create_sender(&self) -> RelaySender {
-        RelaySender {
-            sender: PollSender::new(self.relay_datagram_send_channel.clone()),
+            connections,
         }
     }
-}
 
-impl RelayReceiver {
-    pub(super) fn poll_recv(
-        &mut self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [noq_udp::RecvMeta],
-        recv_infos: &mut [RecvInfo],
-    ) -> Poll<io::Result<usize>> {
-        assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        assert_eq!(
-            bufs.len(),
-            recv_infos.len(),
-            "non matching bufs & recv_infos"
-        );
-        let mut num_msgs = 0;
-        for i in 0..bufs.len() {
-            let buf_out = &mut bufs[i];
-            let meta_out = &mut metas[i];
-            let recv_info = &mut recv_infos[i];
-            let dm = match self.poll_recv_queue(cx) {
-                Poll::Ready(Some(recv)) => recv,
-                Poll::Ready(None) => {
-                    error!("relay_recv_channel closed");
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "connection closed",
-                    )));
-                }
-                Poll::Pending => {
-                    break;
-                }
-            };
+    /// Returns the connections to the relay servers.
+    pub(crate) fn connections(&self) -> &RelayConnections {
+        &self.connections
+    }
 
-            // This *tries* to make the datagrams fit into our buffer by re-batching them.
-            let num_segments = dm
-                .datagrams
-                .segment_size
-                .map_or(1, |ss| buf_out.len() / u16::from(ss) as usize);
-            let datagrams = dm.datagrams.take_segments(num_segments);
-            let empty_now = datagrams.contents.is_empty();
-            let empty_after = dm.datagrams.contents.is_empty();
-
-            let dm = RelayRecvDatagram {
-                datagrams,
-                src: dm.src,
-                url: dm.url.clone(),
-            };
-
-            // If `take_segments` processed the whole contents (empty_after) or none at all
-            // (empty_now) we shouldn't process what's left in `self.pending_item`.
-            // In the first case the remaining `pending_item` is empty and can be dropped.
-            // In the second case a single segment could not fit into the buffer, future
-            // calls to `poll_recv` would not change this so drop the `pending_item` with
-            // the oversized segment size.
-            if empty_after || empty_now {
-                self.pending_item = None;
-            }
-            if empty_now {
-                warn!(
-                    noq_buf_len = buf_out.len(),
-                    segment_size = ?dm.datagrams.segment_size,
-                    "dropping received datagram: segment_size too large");
-                continue;
-            }
-
-            if buf_out.len() < dm.datagrams.contents.len() {
-                // Our receive buffer isn't big enough to process this datagram.
-                // Continuing would cause a panic.
-                warn!(
-                    noq_buf_len = buf_out.len(),
-                    datagram_len = dm.datagrams.contents.len(),
-                    segment_size = ?dm.datagrams.segment_size,
-                    "dropping received datagram: noq buffer too small"
-                );
-                break;
-                // In theory we could put some logic in here to fragment the datagram in case
-                // we still have enough room in our `buf_out` left to fit a couple of
-                // `dm.datagrams.segment_size`es, but we *should* have cut those datagrams
-                // to appropriate sizes earlier in the pipeline (just before we put them
-                // into the `relay_datagram_recv_queue` in the `ActiveRelayActor`).
-                // So the only case in which this happens is we receive a datagram via the relay
-                // that's essentially bigger than our configured `max_udp_payload_size`.
-                // In that case we drop it and let MTU discovery take over.
-            }
-
-            buf_out[..dm.datagrams.contents.len()].copy_from_slice(&dm.datagrams.contents);
-            meta_out.len = dm.datagrams.contents.len();
-            meta_out.stride = dm
-                .datagrams
-                .segment_size
-                .map_or(dm.datagrams.contents.len(), |s| u16::from(s) as usize);
-            meta_out.ecn = None;
-            meta_out.dst_ip = None;
-
-            *recv_info = RecvInfo::from_addr((dm.url, dm.src).into());
-            num_msgs += 1;
-        }
-
-        // If we have any msgs to report, they are in the first `num_msgs_total` slots
-        if num_msgs > 0 {
-            assert!(num_msgs <= metas.len());
-            Poll::Ready(Ok(num_msgs))
-        } else {
-            Poll::Pending
+    /// Hands `endpoint` to the relay actor, which adds a noq socket per relay server to it.
+    pub(super) async fn start_sockets(&self, endpoint: noq::Endpoint, sock: Arc<Socket>) {
+        let msg = RelayActorMessage::StartSockets { endpoint, sock };
+        if self.actor_sender.send(msg).await.is_err() {
+            warn!("relay actor is gone, relay servers get no sockets");
         }
     }
-}
 
-impl RelayTransport {
     pub(super) fn local_addr_watch(&self) -> RelayAddrWatcher {
         let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
@@ -228,27 +118,408 @@ impl RelayTransport {
     }
 }
 
-impl RelayReceiver {
-    /// Makes sure we have a pending item stored, if not, it'll poll a new one from the queue.
-    ///
-    /// Returns a mutable reference to the stored pending item.
-    #[inline]
-    fn poll_recv_queue<'a>(
-        &'a mut self,
-        cx: &mut Context,
-    ) -> Poll<Option<&'a mut RelayRecvDatagram>> {
-        // Borrow checker doesn't quite understand an if let Some(_)... here
-        if self.pending_item.is_some() {
-            return Poll::Ready(self.pending_item.as_mut());
+/// The connections to the relay servers, one per relay URL.
+///
+/// A connection stays for the lifetime of the endpoint, even while it is disconnected. Its
+/// index selects the range of relay mapped addresses that noq routes to its socket. The
+/// relay actor watches for new connections and for requests to connect, see
+/// [`Self::changed`].
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RelayConnections(Arc<RelayConnectionsInner>);
+
+#[derive(Debug, Default)]
+struct RelayConnectionsInner {
+    /// Indexed by [`RelayConnection::index`].
+    connections: Mutex<Vec<Arc<RelayConnection>>>,
+    /// Notified when a connection is added, or asks to connect.
+    changed: Arc<Notify>,
+    metrics: Arc<SocketMetrics>,
+    /// Connects every new connection to this channel, to test backpressure.
+    #[cfg(test)]
+    test_sink: Option<mpsc::Sender<ClientToRelayMsg>>,
+}
+
+impl RelayConnections {
+    pub(crate) fn new(metrics: Arc<SocketMetrics>) -> Self {
+        Self(Arc::new(RelayConnectionsInner {
+            metrics,
+            ..Default::default()
+        }))
+    }
+
+    /// Returns the connection to `url`, creating it if needed.
+    pub(crate) fn get(&self, url: &RelayUrl) -> Arc<RelayConnection> {
+        let mut connections = self.0.connections.lock().expect("poisoned");
+        if let Some(connection) = connections.iter().find(|c| c.url == *url) {
+            return connection.clone();
         }
+        // More relay servers than this are not expected, they would share the last range.
+        let index = u16::try_from(connections.len()).unwrap_or(u16::MAX);
+        let connection = Arc::new(RelayConnection::new(
+            url.clone(),
+            index,
+            self.0.changed.clone(),
+            self.0.metrics.clone(),
+        ));
+        #[cfg(test)]
+        if let Some(sink) = &self.0.test_sink {
+            let sink = tokio_util::sync::PollSender::new(sink.clone());
+            let sink = n0_future::SinkExt::sink_map_err(sink, io::Error::other);
+            connection.send.lock().expect("poisoned").sink = Some(Box::pin(sink));
+        }
+        connections.push(connection.clone());
+        self.0.changed.notify_one();
+        connection
+    }
 
-        let item = match self.relay_datagram_recv_queue.poll_recv(cx) {
-            Poll::Ready(Some(item)) => item,
-            Poll::Ready(None) => return Poll::Ready(None),
-            Poll::Pending => return Poll::Pending,
+    /// Returns all connections, in the order of their indices.
+    fn all(&self) -> Vec<Arc<RelayConnection>> {
+        self.0.connections.lock().expect("poisoned").clone()
+    }
+
+    /// Waits until a connection is added, or asks to connect.
+    async fn changed(&self) {
+        self.0.changed.notified().await
+    }
+
+    /// Creates connections that are always connected to a channel of `capacity` items.
+    #[cfg(test)]
+    pub(super) fn with_test_sink(capacity: usize) -> (Self, mpsc::Receiver<ClientToRelayMsg>) {
+        let (sender, receiver) = mpsc::channel(capacity);
+        let connections = Self(Arc::new(RelayConnectionsInner {
+            test_sink: Some(sender),
+            ..Default::default()
+        }));
+        (connections, receiver)
+    }
+}
+
+/// The connection to one relay server.
+///
+/// Its noq socket receives from it, the senders of the noq connections send on it, and an
+/// [`ActiveRelayActor`] connects it and hands it the halves of the relay client.
+///
+/// [`ActiveRelayActor`]: self::actor
+#[derive(derive_more::Debug)]
+pub(crate) struct RelayConnection {
+    url: RelayUrl,
+    index: u16,
+    send: Mutex<SendHalf>,
+    /// Wakes the senders that wait for the sink, and the relay actor.
+    #[debug(skip)]
+    sink_wakers: Arc<SinkWakers>,
+    recv: Mutex<RecvHalf>,
+    /// Set by a sender that found the connection down, cleared by the relay actor.
+    connect_requested: AtomicBool,
+    /// [`RelayConnectionsInner::changed`].
+    #[debug(skip)]
+    changed: Arc<Notify>,
+    created: Instant,
+    /// When a sender last used the connection, in milliseconds since `created`.
+    last_used_ms: AtomicU64,
+    #[debug(skip)]
+    metrics: Arc<SocketMetrics>,
+}
+
+#[derive(derive_more::Debug, Default)]
+struct SendHalf {
+    /// The sink, while connected.
+    #[debug(skip)]
+    sink: Option<RelaySink>,
+    /// Whether the sink holds frames that are not flushed yet.
+    needs_flush: bool,
+    /// The error that ended the connection, for the relay actor.
+    error: Option<io::Error>,
+}
+
+#[derive(Debug, Default)]
+struct RecvHalf {
+    /// The stream, while connected.
+    stream: Option<RelayStream>,
+    /// The waker of the noq socket's receive task, woken on connect and disconnect.
+    waker: Option<Waker>,
+}
+
+/// The stream half of a relay client, and where to pass its frames that are not datagrams.
+#[derive(Debug)]
+pub(super) struct RelayStream {
+    pub(super) stream: ClientStream,
+    pub(super) events: mpsc::Sender<RelayEvent>,
+}
+
+/// A frame for the relay actor, or the end of the stream.
+#[derive(Debug)]
+pub(super) enum RelayEvent {
+    Frame(RelayToClientMsg),
+    Closed(Option<RecvError>),
+}
+
+impl RelayConnection {
+    fn new(url: RelayUrl, index: u16, changed: Arc<Notify>, metrics: Arc<SocketMetrics>) -> Self {
+        Self {
+            url,
+            index,
+            send: Default::default(),
+            sink_wakers: Default::default(),
+            recv: Default::default(),
+            connect_requested: AtomicBool::new(false),
+            changed,
+            created: Instant::now(),
+            last_used_ms: AtomicU64::new(0),
+            metrics,
+        }
+    }
+
+    pub(crate) fn url(&self) -> &RelayUrl {
+        &self.url
+    }
+
+    /// Returns the index of this connection, which selects its relay mapped addresses.
+    pub(crate) fn index(&self) -> u16 {
+        self.index
+    }
+
+    /// Installs the halves of a new relay client.
+    fn connect(&self, sink: RelaySink, stream: RelayStream) {
+        *self.send.lock().expect("poisoned") = SendHalf {
+            sink: Some(sink),
+            ..Default::default()
         };
+        self.set_stream(Some(stream));
+        self.sink_wakers.wake_all();
+    }
 
-        Poll::Ready(Some(self.pending_item.insert(item)))
+    /// Removes the halves of the relay client, and returns the sink to close it.
+    fn disconnect(&self) -> Option<RelaySink> {
+        let sink = self.send.lock().expect("poisoned").sink.take();
+        self.set_stream(None);
+        self.sink_wakers.wake_all();
+        sink
+    }
+
+    fn set_stream(&self, stream: Option<RelayStream>) {
+        let mut recv = self.recv.lock().expect("poisoned");
+        recv.stream = stream;
+        if let Some(waker) = recv.waker.take() {
+            waker.wake();
+        }
+    }
+
+    /// Returns when a sender last used this connection.
+    fn last_used(&self) -> Instant {
+        self.created + Duration::from_millis(self.last_used_ms.load(Ordering::Relaxed))
+    }
+
+    fn mark_used(&self) {
+        let elapsed = u64::try_from(self.created.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.last_used_ms.store(elapsed, Ordering::Relaxed);
+    }
+
+    /// Asks the relay actor to connect.
+    fn request_connect(&self) {
+        if !self.connect_requested.swap(true, Ordering::Relaxed) {
+            self.changed.notify_one();
+        }
+    }
+
+    /// Returns whether a sender asked to connect since the last call.
+    fn take_connect_request(&self) -> bool {
+        self.connect_requested.swap(false, Ordering::Relaxed)
+    }
+
+    /// Sends the frame `make` returns, once the sink is ready.
+    ///
+    /// Fails with [`io::ErrorKind::NotConnected`] while disconnected, and then wakes `cx` on
+    /// the next connect.
+    fn poll_send(
+        &self,
+        cx: &mut Context<'_>,
+        make: impl FnOnce() -> ClientToRelayMsg,
+    ) -> Poll<io::Result<()>> {
+        let mut send = self.send.lock().expect("poisoned");
+        let send = &mut *send;
+        let Some(sink) = &mut send.sink else {
+            self.sink_wakers.register(cx.waker());
+            return Poll::Ready(Err(io::ErrorKind::NotConnected.into()));
+        };
+        // Several senders wait for the one sink, which keeps only one waker: give it one
+        // that wakes them all.
+        let waker = Waker::from(self.sink_wakers.clone());
+        let mut sink_cx = Context::from_waker(&waker);
+        let result = match sink.as_mut().poll_ready(&mut sink_cx) {
+            Poll::Pending => {
+                self.sink_wakers.register(cx.waker());
+                return Poll::Pending;
+            }
+            Poll::Ready(result) => result.and_then(|()| sink.as_mut().start_send(make())),
+        };
+        // Flush right away. If that blocks, the relay actor finishes it.
+        let result = result.and_then(|()| match sink.as_mut().poll_flush(&mut sink_cx) {
+            Poll::Ready(result) => result,
+            Poll::Pending => {
+                send.needs_flush = true;
+                Ok(())
+            }
+        });
+        if let Err(err) = result {
+            self.fail(send, err);
+            return Poll::Ready(Err(io::ErrorKind::NotConnected.into()));
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    /// Flushes the frames the senders left in the sink.
+    ///
+    /// Returns `Ok` once flushed, and the error once the connection failed. Pending while
+    /// there is nothing to flush. Polled by the relay actor while connected.
+    fn poll_flush(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let mut send = self.send.lock().expect("poisoned");
+        let send = &mut *send;
+        if let Some(err) = send.error.take() {
+            return Poll::Ready(Err(err));
+        }
+        self.sink_wakers.register(cx.waker());
+        let (true, Some(sink)) = (send.needs_flush, &mut send.sink) else {
+            return Poll::Pending;
+        };
+        let waker = Waker::from(self.sink_wakers.clone());
+        let result = std::task::ready!(sink.as_mut().poll_flush(&mut Context::from_waker(&waker)));
+        send.needs_flush = false;
+        if result.is_err() {
+            send.sink = None;
+        }
+        Poll::Ready(result)
+    }
+
+    /// Ends the connection after a sink error, and wakes the relay actor to reconnect.
+    fn fail(&self, send: &mut SendHalf, err: io::Error) {
+        debug!(url = %self.url, "relay send failed: {err:#}");
+        send.sink = None;
+        send.error.get_or_insert(err);
+        self.sink_wakers.wake_all();
+    }
+
+    /// Receives the next datagram, and hands other frames to the relay actor.
+    ///
+    /// Pending while disconnected, and then wakes `cx` on the next connect.
+    fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<(EndpointId, Datagrams)> {
+        let mut recv = self.recv.lock().expect("poisoned");
+        match &mut recv.waker {
+            Some(waker) => waker.clone_from(cx.waker()),
+            None => recv.waker = Some(cx.waker().clone()),
+        }
+        while let Some(stream) = &mut recv.stream {
+            let event = match std::task::ready!(Pin::new(&mut stream.stream).poll_next(cx)) {
+                Some(Ok(RelayToClientMsg::Datagrams {
+                    remote_endpoint_id,
+                    datagrams,
+                })) => return Poll::Ready((remote_endpoint_id, datagrams)),
+                Some(Ok(frame)) => RelayEvent::Frame(frame),
+                Some(Err(err)) => RelayEvent::Closed(Some(err)),
+                None => RelayEvent::Closed(None),
+            };
+            let closed = matches!(event, RelayEvent::Closed(_));
+            if let Err(err) = stream.events.try_send(event) {
+                warn!(url = %self.url, "dropping relay frame for the relay actor: {err:#}");
+            }
+            if closed {
+                recv.stream = None;
+            }
+        }
+        Poll::Pending
+    }
+}
+
+/// The wakers waiting for a relay sink, woken all at once.
+#[derive(Debug, Default)]
+struct SinkWakers(Mutex<Vec<Waker>>);
+
+impl SinkWakers {
+    fn register(&self, waker: &Waker) {
+        let mut wakers = self.0.lock().expect("poisoned");
+        if !wakers.iter().any(|w| w.will_wake(waker)) {
+            wakers.push(waker.clone());
+        }
+    }
+
+    fn wake_all(&self) {
+        let wakers = std::mem::take(&mut *self.0.lock().expect("poisoned"));
+        for waker in wakers {
+            waker.wake();
+        }
+    }
+}
+
+impl Wake for SinkWakers {
+    fn wake(self: Arc<Self>) {
+        self.wake_all();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.wake_all();
+    }
+}
+
+/// Sends datagrams on one relay connection, for one sending task.
+#[derive(Debug, Clone)]
+pub(crate) struct RelayDatagramSender {
+    connection: Arc<RelayConnection>,
+    /// Since when this sender waits for the relay server to connect.
+    waiting_since: Option<Instant>,
+}
+
+impl RelayDatagramSender {
+    pub(crate) fn new(connection: Arc<RelayConnection>) -> Self {
+        Self {
+            connection,
+            waiting_since: None,
+        }
+    }
+
+    pub(crate) fn url(&self) -> &RelayUrl {
+        &self.connection.url
+    }
+
+    /// Sends `transmit` to `dst` through the relay server.
+    ///
+    /// While the relay server is disconnected, asks to connect and waits, but drops the
+    /// transmit after [`UNDELIVERABLE_DATAGRAM_TIMEOUT`].
+    pub(crate) fn poll_send(
+        &mut self,
+        cx: &mut Context,
+        dst: EndpointId,
+        transmit: &Transmit<'_>,
+    ) -> Poll<io::Result<()>> {
+        let connection = &self.connection;
+        connection.mark_used();
+        let result = std::task::ready!(connection.poll_send(cx, || {
+            ClientToRelayMsg::Datagrams {
+                dst_endpoint_id: dst,
+                datagrams: datagrams_from_transmit(transmit),
+            }
+        }));
+        match result {
+            Err(err) if err.kind() == io::ErrorKind::NotConnected => {
+                connection.request_connect();
+                let since = *self.waiting_since.get_or_insert_with(Instant::now);
+                if since.elapsed() < UNDELIVERABLE_DATAGRAM_TIMEOUT {
+                    return Poll::Pending;
+                }
+                debug!(url = %connection.url, "relay server not connected, dropping transmit");
+                self.waiting_since = None;
+                Poll::Ready(Ok(()))
+            }
+            result => {
+                self.waiting_since = None;
+                if result.is_ok() {
+                    connection
+                        .metrics
+                        .send_relay
+                        .inc_by(transmit.contents.len() as _);
+                }
+                Poll::Ready(result)
+            }
+        }
     }
 }
 
@@ -288,50 +559,6 @@ impl RelayNetworkChangeSender {
     }
 }
 
-/// Sender to send datagrams to the [`RelayActor`].
-///
-/// This includes the waker coordination required to support [`noq::UdpSender::poll_send`].
-#[derive(Debug, Clone)]
-pub(crate) struct RelaySender {
-    sender: PollSender<RelaySendItem>,
-}
-
-impl RelaySender {
-    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _endpoint_id: &EndpointId) -> bool {
-        true
-    }
-
-    pub(super) fn poll_send(
-        &mut self,
-        cx: &mut Context,
-        dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
-        transmit: &Transmit<'_>,
-    ) -> Poll<io::Result<()>> {
-        match ready!(self.sender.poll_reserve(cx)) {
-            Ok(()) => {
-                let contents = datagrams_from_transmit(transmit);
-                let item = RelaySendItem {
-                    remote_endpoint: dest_endpoint,
-                    url: dest_url.clone(),
-                    datagrams: contents,
-                };
-                match self.sender.send_item(item) {
-                    Ok(()) => Poll::Ready(Ok(())),
-                    Err(_err) => Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::ConnectionReset,
-                        "channel to actor is closed",
-                    ))),
-                }
-            }
-            Err(_err) => Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::ConnectionReset,
-                "channel to actor is closed",
-            ))),
-        }
-    }
-}
-
 /// Translate a UDP transmit to the `Datagrams` type for sending over the relay.
 fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
     Datagrams {
@@ -350,147 +577,82 @@ fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeSet,
-        num::NonZeroU16,
-        sync::{Arc, atomic::AtomicBool},
-        time::Duration,
-    };
+    use std::future::poll_fn;
 
-    use iroh_base::{EndpointId, SecretKey};
-    use iroh_relay::{
-        RelayMap,
-        tls::{CaTlsConfig, default_provider},
-    };
-    use tokio::task::JoinSet;
-    use tracing::debug;
+    use iroh_base::SecretKey;
 
     use super::*;
-    use crate::{defaults::staging, dns::DnsResolver};
+    use crate::{defaults::staging, socket::mapped_addrs::relay_mapped_net};
 
-    impl RelaySender {
-        pub(in crate::socket::transports) fn bounded_for_test(
-            capacity: usize,
-        ) -> (RelaySender, mpsc::Receiver<RelaySendItem>) {
-            let (sender, receiver) = mpsc::channel(capacity);
-            (
-                RelaySender {
-                    sender: PollSender::new(sender),
-                },
-                receiver,
-            )
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_relay_datagram_queue() {
-        let capacity = 16;
-        let (sender, mut receiver) = mpsc::channel(capacity);
-        let url = staging::default_na_east_relay().url;
-
-        let mut tasks = JoinSet::new();
-
-        tasks.spawn({
-            async move {
-                let mut expected_msgs: BTreeSet<usize> = (0..capacity).collect();
-                while !expected_msgs.is_empty() {
-                    let datagram: RelayRecvDatagram = receiver.recv().await.unwrap();
-                    let msg_num = usize::from_le_bytes(datagram.datagrams.contents.as_ref().try_into().unwrap());
-                    debug!("Received {msg_num}");
-
-                    if !expected_msgs.remove(&msg_num) {
-                        panic!("Received message number {msg_num} twice or more, but expected it only exactly once.");
-                    }
-                }
-            }
-        });
-
-        for i in 0..capacity {
-            tasks.spawn({
-                let sender = sender.clone();
-                let url = url.clone();
-                async move {
-                    debug!("Sending {i}");
-                    sender
-                        .try_send(RelayRecvDatagram {
-                            url,
-                            src: EndpointId::from_bytes(&[0u8; 32]).unwrap(),
-                            datagrams: Datagrams::from(&i.to_le_bytes()),
-                        })
-                        .unwrap();
-                }
-            });
-        }
-
-        // We expect all of this work to be done in 10 seconds max.
-        if tokio::time::timeout(Duration::from_secs(10), tasks.join_all())
-            .await
-            .is_err()
-        {
-            panic!("Timeout - not all messages between 0 and {capacity} received.");
-        }
-    }
-
-    /// Builds a [`RelayTransport`] that never actually dials a relay (its home
-    /// relay watcher is left unset), just so we get a real `poll_recv` to exercise.
-    fn test_relay_transport() -> (RelayTransport, RelayReceiver) {
-        let config = RelayActorConfig {
-            my_relay: HomeRelayWatch::default(),
-            secret_key: SecretKey::from_bytes(&[7u8; 32]),
-            dns_resolver: DnsResolver::new(),
-            proxy_url: None,
-            ipv6_reported: Arc::new(AtomicBool::new(false)),
-            tls_config: CaTlsConfig::insecure_skip_verify()
-                .client_config(default_provider())
-                .expect("infallible"),
-            metrics: Default::default(),
-            relay_map: RelayMap::empty(),
-        };
-        RelayTransport::new(config, CancellationToken::new())
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn progress_is_made_for_large_segment_size_datagram_batch() {
-        let (_transport, mut recv) = test_relay_transport();
-
-        let url = staging::default_na_east_relay().url;
-        let src = EndpointId::from_bytes(&[3u8; 32]).unwrap();
-
-        // Fat datagram batch with segment size larger than the buffer
-        let datagrams = Datagrams {
+    fn transmit(contents: &[u8]) -> Transmit<'_> {
+        Transmit {
             ecn: None,
-            segment_size: NonZeroU16::new(2000),
-            contents: Bytes::from(vec![0u8; 4000]),
-        };
-
-        recv.pending_item = Some(RelayRecvDatagram {
-            url,
-            src,
-            datagrams,
-        });
-
-        let waker = std::task::Waker::noop();
-        let mut cx = Context::from_waker(waker);
-
-        // Deliberately smaller than the 2000-byte segment size above
-        let mut storage = [0u8; 1500];
-        let mut metas = [noq_udp::RecvMeta::default()];
-        let mut recv_infos = [RecvInfo::default()];
-
-        let mut progressed = false;
-        // progress does not need to be immediate but within a reasonable number of iterations
-        for _ in 0..10 {
-            let mut bufs = [io::IoSliceMut::new(&mut storage)];
-            match recv.poll_recv(&mut cx, &mut bufs, &mut metas, &mut recv_infos) {
-                Poll::Ready(Ok(_)) | Poll::Pending => {}
-                Poll::Ready(Err(err)) => panic!("poll_recv failed: {err}"),
-            }
-            if recv.pending_item.is_none() {
-                progressed = true;
-                break;
-            }
+            contents,
+            segment_size: None,
         }
+    }
 
-        assert!(progressed, "poll_recv made no progress on batch too large");
+    #[test]
+    fn connections_get_one_index_per_url() {
+        let connections = RelayConnections::default();
+        let a: RelayUrl = "https://a.example.com".parse().unwrap();
+        let b: RelayUrl = "https://b.example.com".parse().unwrap();
+        assert_eq!(connections.get(&a).index(), 0);
+        assert_eq!(connections.get(&b).index(), 1);
+        assert_eq!(connections.get(&a).index(), 0);
+        assert!(Arc::ptr_eq(&connections.get(&b), &connections.get(&b)));
+        // The ranges of two relays are disjoint /80s of the relay /64.
+        let (net_a, net_b) = (relay_mapped_net(0), relay_mapped_net(1));
+        assert_eq!(net_a.prefix_len(), 80);
+        assert!(!net_a.contains(&net_b.addr()));
+    }
+
+    /// A sender waits while the sink is full, and continues once it has room.
+    #[tokio::test]
+    async fn sender_waits_for_sink() {
+        let (connections, mut sink) = RelayConnections::with_test_sink(1);
+        let url = staging::default_na_east_relay().url;
+        let dst = SecretKey::from_bytes(&[1u8; 32]).public();
+        let mut sender = RelayDatagramSender::new(connections.get(&url));
+        let mut cx = Context::from_waker(Waker::noop());
+
+        assert!(matches!(
+            sender.poll_send(&mut cx, dst, &transmit(b"one")),
+            Poll::Ready(Ok(()))
+        ));
+        assert!(
+            sender
+                .poll_send(&mut cx, dst, &transmit(b"two"))
+                .is_pending()
+        );
+        let Some(ClientToRelayMsg::Datagrams { datagrams, .. }) = sink.recv().await else {
+            panic!("expected datagrams");
+        };
+        assert_eq!(datagrams.contents.as_ref(), b"one");
+        poll_fn(|cx| sender.poll_send(cx, dst, &transmit(b"two")))
+            .await
+            .unwrap();
+    }
+
+    /// A sender of a disconnected relay asks to connect, and waits.
+    #[tokio::test]
+    async fn disconnected_sender_requests_connect() {
+        let connections = RelayConnections::default();
+        let url = staging::default_na_east_relay().url;
+        let dst = SecretKey::from_bytes(&[1u8; 32]).public();
+        let connection = connections.get(&url);
+        let mut sender = RelayDatagramSender::new(connection.clone());
+        let mut cx = Context::from_waker(Waker::noop());
+
+        assert!(
+            sender
+                .poll_send(&mut cx, dst, &transmit(b"one"))
+                .is_pending()
+        );
+        tokio::time::timeout(Duration::from_secs(1), connections.changed())
+            .await
+            .expect("not notified");
+        assert!(connection.take_connect_request());
+        assert!(!connection.take_connect_request());
     }
 }
