@@ -39,7 +39,7 @@ use crate::{
     KeyCache,
     defaults::{DEFAULT_KEY_CACHE_CAPACITY, timeouts::SERVER_WRITE_TIMEOUT},
     http::{
-        CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION,
+        CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_ROUTE, SUPPORTED_WEBSOCKET_VERSION,
         WEBSOCKET_UPGRADE_PROTOCOL,
     },
     protos::{handshake, relay::MAX_FRAME_SIZE, streams::WsBytesFramed},
@@ -748,7 +748,7 @@ impl Service<Request<Incoming>> for RelayServiceWithNotify {
         // Create a client if the request hits the relay endpoint.
         if matches!(
             (req.method(), req.uri().path()),
-            (&hyper::Method::GET, RELAY_PATH)
+            (&hyper::Method::GET, RELAY_ROUTE)
         ) {
             let response = match self.handle_relay_ws_upgrade(req) {
                 Ok(response) => Ok(response),
@@ -1363,7 +1363,7 @@ mod tests {
             "baz, iroh-relay-v1, iroh-relay-v2, boo",
             "foo, iroh-relay-v2, bar",
         ] {
-            let ws_uri = format!("ws://{addr}{RELAY_PATH}");
+            let ws_uri = format!("ws://{addr}{RELAY_ROUTE}");
             let (_stream, response) = tokio_websockets::ClientBuilder::new()
                 .uri(&ws_uri)
                 .expect("valid websocket URI")

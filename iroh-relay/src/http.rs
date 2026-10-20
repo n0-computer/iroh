@@ -8,24 +8,21 @@ pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
 #[cfg(feature = "server")] // only used in the server for now
 pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
 
-/// The HTTP path under which the relay accepts relaying connections
-/// (over websockets and a custom upgrade protocol).
-pub const RELAY_PATH: &str = "/relay";
-/// The HTTP path under which the relay allows doing latency queries for testing.
-pub const RELAY_PROBE_PATH: &str = "/ping";
-
-/// Returns the URL of `path` (such as [`RELAY_PATH`]) on the relay at `relay_url`.
+/// The path under which the relay accepts relaying connections (over
+/// websockets and a custom upgrade protocol), relative to the relay URL.
 ///
-/// Any path prefix of the relay URL is kept, so a relay served under a prefix
-/// behind a reverse proxy works: `https://example.com/prefix/` gives
-/// `https://example.com/prefix/relay`. A relay URL without a path gives
-/// `https://example.com/relay` as before.
-pub fn relay_route(relay_url: &url::Url, path: &str) -> url::Url {
-    let mut url = relay_url.clone();
-    let prefix = relay_url.path().trim_end_matches('/');
-    url.set_path(&format!("{prefix}{path}"));
-    url
-}
+/// Clients join it onto the relay URL, so a relay served under a path prefix
+/// keeps it: `https://example.com/prefix/` (with its trailing slash) gives
+/// `https://example.com/prefix/relay`. Servers route [`RELAY_ROUTE`].
+pub const RELAY_PATH: &str = "relay";
+/// The path under which the relay allows doing latency queries for testing,
+/// relative to the relay URL, as [`RELAY_PATH`]. Servers route
+/// [`RELAY_PROBE_ROUTE`].
+pub const RELAY_PROBE_PATH: &str = "ping";
+/// The route a relay server serves [`RELAY_PATH`] on.
+pub const RELAY_ROUTE: &str = "/relay";
+/// The route a relay server serves [`RELAY_PROBE_PATH`] on.
+pub const RELAY_PROBE_ROUTE: &str = "/ping";
 
 /// The HTTP header name for relay client authentication
 pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay-client-auth-v1");
@@ -131,24 +128,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn relay_route_keeps_path_prefix() {
-        let route = |url: &str, path| relay_route(&url.parse().unwrap(), path).to_string();
+    fn paths_join_onto_the_relay_url_and_match_the_routes() {
+        let join = |base: &str, path| {
+            url::Url::parse(base)
+                .unwrap()
+                .join(path)
+                .unwrap()
+                .to_string()
+        };
         assert_eq!(
-            route("https://example.com", RELAY_PATH),
+            join("https://example.com", RELAY_PATH),
             "https://example.com/relay"
         );
         assert_eq!(
-            route("https://example.com/", RELAY_PROBE_PATH),
+            join("https://example.com/", RELAY_PROBE_PATH),
             "https://example.com/ping"
         );
         assert_eq!(
-            route("https://example.com/prefix/", RELAY_PATH),
+            join("https://example.com/prefix/", RELAY_PATH),
             "https://example.com/prefix/relay"
         );
         assert_eq!(
-            route("https://example.com/a/b", RELAY_PROBE_PATH),
+            join("https://example.com/a/b/", RELAY_PROBE_PATH),
             "https://example.com/a/b/ping"
         );
+        assert_eq!(RELAY_ROUTE, format!("/{RELAY_PATH}"));
+        assert_eq!(RELAY_PROBE_ROUTE, format!("/{RELAY_PROBE_PATH}"));
     }
 
     #[test]

@@ -27,7 +27,7 @@ use url::Url;
 pub use self::conn::{RecvError, SendError};
 use crate::{
     KeyCache,
-    http::{ProtocolVersion, RELAY_PATH, relay_route},
+    http::{ProtocolVersion, RELAY_PATH},
     protos::{
         handshake,
         relay::{ClientToRelayMsg, RelayToClientMsg},
@@ -264,7 +264,11 @@ impl ClientBuilder {
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
         };
 
-        let mut dial_url = relay_route(&self.url, RELAY_PATH);
+        let mut dial_url = self.url.join(RELAY_PATH).map_err(|_| {
+            e!(ConnectError::InvalidRelayUrl {
+                url: (*self.url).clone()
+            })
+        })?;
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
         // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
         dial_url
@@ -387,7 +391,11 @@ impl ClientBuilder {
     pub async fn connect(&self) -> Result<Client, ConnectError> {
         use crate::http::AUTH_TOKEN_URL_QUERY_PARAM;
 
-        let mut dial_url = relay_route(&self.url, RELAY_PATH);
+        let mut dial_url = self.url.join(RELAY_PATH).map_err(|_| {
+            e!(ConnectError::InvalidRelayUrl {
+                url: (*self.url).clone()
+            })
+        })?;
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
         // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
         dial_url

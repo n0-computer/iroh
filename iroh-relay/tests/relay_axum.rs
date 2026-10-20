@@ -33,7 +33,7 @@ use iroh_dns::dns::DnsResolver;
 use iroh_relay::{
     ExportKeyingMaterial, KeyCache,
     client::ClientBuilder,
-    http::{CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PATH, RELAY_PROBE_PATH},
+    http::{CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_PROBE_ROUTE, RELAY_ROUTE},
     protos::{handshake, streams::StreamError},
     server::{
         AllowAll, ClientRequest, DynAccessControl, Metrics, client::Config, clients::Clients,
@@ -70,8 +70,8 @@ impl RelayState {
 async fn serve_axum() -> Result<(SocketAddr, AbortOnDropHandle<()>)> {
     let state = RelayState::new();
     let router = Router::new()
-        .route(RELAY_PATH, get(relay_handler))
-        .route(RELAY_PROBE_PATH, get(ping_handler))
+        .route(RELAY_ROUTE, get(relay_handler))
+        .route(RELAY_PROBE_ROUTE, get(ping_handler))
         .with_state(state);
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;

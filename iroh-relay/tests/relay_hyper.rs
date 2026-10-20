@@ -21,7 +21,7 @@ use iroh_dns::dns::DnsResolver;
 use iroh_relay::{
     KeyCache,
     client::ClientBuilder,
-    http::{RELAY_PATH, RELAY_PROBE_PATH},
+    http::{RELAY_PROBE_ROUTE, RELAY_ROUTE},
     server::{
         AllowAll, Metrics,
         http_server::{BytesBody, Handlers, RelayService, RelayServiceWithNotify},
@@ -37,15 +37,17 @@ use tokio::{net::TcpListener, sync::Notify};
 
 async fn dispatch(req: Request<Incoming>, service: RelayService) -> Response<BytesBody> {
     match (req.method(), req.uri().path()) {
-        (&Method::GET, RELAY_PROBE_PATH) => Response::builder()
+        (&Method::GET, RELAY_PROBE_ROUTE) => Response::builder()
             .status(StatusCode::OK)
             .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(Box::new(Full::new(Bytes::new())) as BytesBody)
             .expect("valid response"),
-        (&Method::GET, RELAY_PATH) => RelayServiceWithNotify::new(service, Arc::new(Notify::new()))
-            .call(req)
-            .await
-            .expect("RelayServiceWithNotify::call returns Ok"),
+        (&Method::GET, RELAY_ROUTE) => {
+            RelayServiceWithNotify::new(service, Arc::new(Notify::new()))
+                .call(req)
+                .await
+                .expect("RelayServiceWithNotify::call returns Ok")
+        }
         _ => Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Box::new(Full::new("not found".into())) as BytesBody)
