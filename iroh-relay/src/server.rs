@@ -57,7 +57,7 @@ use tracing::{Instrument, debug, error, info, info_span, instrument};
 use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
-    http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_PATH},
+    http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_RELATIVE_PATH},
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
     tls::CaTlsConfig,
 };
@@ -1187,10 +1187,10 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
     }
 }
 
-/// The route latency probes are served on: [`RELAY_PROBE_PATH`] at the root.
+/// The route latency probes are served on: [`RELAY_PROBE_RELATIVE_PATH`] at the root.
 fn probe_route() -> &'static str {
     static ROUTE: std::sync::LazyLock<String> =
-        std::sync::LazyLock::new(|| format!("/{RELAY_PROBE_PATH}"));
+        std::sync::LazyLock::new(|| format!("/{RELAY_PROBE_RELATIVE_PATH}"));
     ROUTE.as_str()
 }
 

@@ -8,15 +8,30 @@ pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
 #[cfg(feature = "server")] // only used in the server for now
 pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
 
+/// The HTTP path under which the relay accepts relaying connections.
+///
+/// Relaying connections are made over websockets and a custom upgrade protocol.
+#[deprecated(
+    since = "1.4.0",
+    note = "Use `RELAY_RELATIVE_PATH`, joined onto the relay URL"
+)]
+pub const RELAY_PATH: &str = "/relay";
+/// The HTTP path under which the relay allows doing latency queries for testing.
+#[deprecated(
+    since = "1.4.0",
+    note = "Use `RELAY_PROBE_RELATIVE_PATH`, joined onto the relay URL"
+)]
+pub const RELAY_PROBE_PATH: &str = "/ping";
+
 /// The path relaying connections are made on, relative to the relay URL.
 ///
 /// Clients join it onto the relay URL, so a relay served under a path prefix
 /// keeps it: `https://example.com/prefix/` gives `https://example.com/prefix/relay`.
-pub const RELAY_PATH: &str = "relay";
+pub const RELAY_RELATIVE_PATH: &str = "relay";
 /// The path latency probes are made on, relative to the relay URL.
 ///
-/// It is joined onto the relay URL in the same way as [`RELAY_PATH`].
-pub const RELAY_PROBE_PATH: &str = "ping";
+/// It is joined onto the relay URL in the same way as [`RELAY_RELATIVE_PATH`].
+pub const RELAY_PROBE_RELATIVE_PATH: &str = "ping";
 
 /// The HTTP header name for relay client authentication
 pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay-client-auth-v1");
@@ -131,19 +146,19 @@ mod tests {
                 .to_string()
         };
         assert_eq!(
-            join("https://example.com", RELAY_PATH),
+            join("https://example.com", RELAY_RELATIVE_PATH),
             "https://example.com/relay"
         );
         assert_eq!(
-            join("https://example.com/", RELAY_PROBE_PATH),
+            join("https://example.com/", RELAY_PROBE_RELATIVE_PATH),
             "https://example.com/ping"
         );
         assert_eq!(
-            join("https://example.com/prefix/", RELAY_PATH),
+            join("https://example.com/prefix/", RELAY_RELATIVE_PATH),
             "https://example.com/prefix/relay"
         );
         assert_eq!(
-            join("https://example.com/a/b/", RELAY_PROBE_PATH),
+            join("https://example.com/a/b/", RELAY_PROBE_RELATIVE_PATH),
             "https://example.com/a/b/ping"
         );
     }

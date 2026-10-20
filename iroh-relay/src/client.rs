@@ -27,7 +27,7 @@ use url::Url;
 pub use self::conn::{RecvError, SendError};
 use crate::{
     KeyCache,
-    http::{ProtocolVersion, RELAY_PATH},
+    http::{ProtocolVersion, RELAY_RELATIVE_PATH},
     protos::{
         handshake,
         relay::{ClientToRelayMsg, RelayToClientMsg},
@@ -264,7 +264,7 @@ impl ClientBuilder {
             protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
         };
 
-        let mut dial_url = self.url.join(RELAY_PATH).map_err(|_| {
+        let mut dial_url = self.url.join(RELAY_RELATIVE_PATH).map_err(|_| {
             e!(ConnectError::InvalidRelayUrl {
                 url: (*self.url).clone()
             })
@@ -391,7 +391,7 @@ impl ClientBuilder {
     pub async fn connect(&self) -> Result<Client, ConnectError> {
         use crate::http::AUTH_TOKEN_URL_QUERY_PARAM;
 
-        let mut dial_url = self.url.join(RELAY_PATH).map_err(|_| {
+        let mut dial_url = self.url.join(RELAY_RELATIVE_PATH).map_err(|_| {
             e!(ConnectError::InvalidRelayUrl {
                 url: (*self.url).clone()
             })
