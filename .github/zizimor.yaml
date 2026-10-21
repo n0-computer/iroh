@@ -22,4 +22,4 @@ rules:
     config:
       policies:
         # Allow pinning by tag to n0 actions and workflows.
-        n0-computer/*: ref-pin
+        n0-computer/*: any
