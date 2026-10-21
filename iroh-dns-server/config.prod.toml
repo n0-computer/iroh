@@ -2,6 +2,7 @@ pkarr_put_rate_limit = "smart"
 
 [https]
 port = 443
+listen_backlog = 4096
 domains = ["irohdns.example.org"]
 cert_mode = "lets_encrypt"
 letsencrypt_prod = true
