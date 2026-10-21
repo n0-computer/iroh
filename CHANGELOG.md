@@ -2,6 +2,8 @@
 
 All notable changes to iroh will be documented in this file.
 
+<!-- git-cliff: end of header -->
+
 ## [1.4.0](https://github.com/n0-computer/iroh/compare/v1.3.0..1.4.0) - 2026-10-20
 
 ### ⛰️  Features
@@ -46,10 +48,6 @@ All notable changes to iroh will be documented in this file.
 - Fixup some linting infra ([#4609](https://github.com/n0-computer/iroh/issues/4609)) - ([0a3ef1a](https://github.com/n0-computer/iroh/commit/0a3ef1a5a88e5f29c2770de12b96b113bfc841ac))
 - Trigger some more CI steps for the merge group ([#4618](https://github.com/n0-computer/iroh/issues/4618)) - ([62d71c5](https://github.com/n0-computer/iroh/commit/62d71c564e50d9f2f46234d7c96c93bff51dd3ca))
 - Update noq dependency - ([d506cb9](https://github.com/n0-computer/iroh/commit/d506cb967599c0d1901becf591e286930a8b48d2))
-
-# Changelog
-
-All notable changes to iroh will be documented in this file.
 
 ## [1.3.0](https://github.com/n0-computer/iroh/compare/v1.2.0..1.3.0) - 2026-09-28
 
