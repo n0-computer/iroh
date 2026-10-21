@@ -18,6 +18,19 @@ updates:
       day: "thursday"
       time: "08:00"
       timezone: "America/New_York"
+  # No cooldown for n0 actions, run more often
+  - package-ecosystem: github-actions
+    directory: /
+    groups:
+      github-actions:
+        patterns:
+          - "n0-computer/*"
+    cooldown:
+      default-days: 0
+    schedule:
+      interval: daily
+      time: "08:00"
+      timezone: "America/New_York"
   - package-ecosystem: cargo
     directory: /
     cooldown:
