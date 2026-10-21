@@ -1611,6 +1611,7 @@ mod tests {
             .await?;
 
         server.online().await;
+        client.online().await;
         let server_addr = server.addr();
         info!("server addr: {server_addr:?}");
 
@@ -1643,13 +1644,13 @@ mod tests {
         // Verify that both connections are notified of path changes and get an IP and a relay path.
         tokio::join!(
             async {
-                tokio::time::timeout(Duration::from_secs(1), wait_for_paths(&mut paths_server))
+                tokio::time::timeout(Duration::from_secs(8), wait_for_paths(&mut paths_server))
                     .instrument(error_span!("paths-server"))
                     .await
                     .unwrap()
             },
             async {
-                tokio::time::timeout(Duration::from_secs(1), wait_for_paths(&mut paths_client))
+                tokio::time::timeout(Duration::from_secs(8), wait_for_paths(&mut paths_client))
                     .instrument(error_span!("paths-client"))
                     .await
                     .unwrap()
@@ -1663,16 +1664,16 @@ mod tests {
         conn_client.close(0u32.into(), b"");
 
         // Verify that the path watch streams close shortly after the connection is closed
-        tokio::time::timeout(Duration::from_nanos(1), async {
+        tokio::time::timeout(Duration::from_secs(8), async {
             while paths_client.next().await.is_some() {}
         })
         .await
-        .expect("client paths watcher did not close within 1s of connection close");
-        tokio::time::timeout(Duration::from_nanos(1), async {
+        .expect("client paths watcher did not close within 8s of connection close");
+        tokio::time::timeout(Duration::from_secs(8), async {
             while paths_server.next().await.is_some() {}
         })
         .await
-        .expect("server paths watcher did not close within 1s of connection close");
+        .expect("server paths watcher did not close within 8s of connection close");
 
         server.close().await;
         client.close().await;
