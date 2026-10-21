@@ -9,16 +9,5 @@ min_age:
 rules:
   - ignore: true
     conditions:
-      # fork of obi1kenobi/cargo-semver-checks-action; check whether the
-      # baseline feature landed upstream.
-      - expr: |
-          ActionName == "n0-computer/cargo-semver-checks-action"
-  - ignore: true
-    conditions:
-      # n0-owned, no releases cut.
-      - expr: |
-          ActionName == "n0-computer/actions-upload-release-asset"
-  - ignore: true
-    conditions:
       - expr: |
           ActionRepoOwner == "n0-computer"
