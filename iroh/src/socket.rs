@@ -179,6 +179,10 @@ pub(crate) struct Options {
     /// Proxy configuration.
     pub(crate) proxy_url: Option<Url>,
 
+    /// Custom dialer for relay connections and HTTPS relay probes.
+    #[cfg(not(wasm_browser))]
+    pub(crate) relay_dialer: Option<iroh_relay::client::RelayDialer>,
+
     /// TLS configuration for HTTPS and non-iroh-QUIC connections.
     pub(crate) tls_config: rustls::ClientConfig,
 
@@ -880,6 +884,8 @@ impl EndpointInner {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             proxy_url,
+            #[cfg(not(wasm_browser))]
+            relay_dialer,
             server_config,
             tls_config,
             metrics,
@@ -925,6 +931,8 @@ impl EndpointInner {
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
+            #[cfg(not(wasm_browser))]
+            relay_dialer: relay_dialer.clone(),
             ipv6_reported: ipv6_reported.clone(),
             tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
@@ -1051,6 +1059,7 @@ impl EndpointInner {
             net_report::Options::new(tls_config.clone())
                 .quic_config(qad_config)
                 .proxy_url(proxy_url.clone())
+                .relay_dialer(relay_dialer.clone())
                 .net_report_config(net_report_config)
         };
 
@@ -2169,6 +2178,8 @@ mod tests {
             ],
             secret_key,
             proxy_url: None,
+            #[cfg(not(wasm_browser))]
+            relay_dialer: None,
             dns_resolver: DnsResolver::new(),
             server_config,
             tls_config: CaTlsConfig::default()
@@ -2588,6 +2599,8 @@ mod tests {
             address_lookup_user_data: None,
             dns_resolver,
             proxy_url: None,
+            #[cfg(not(wasm_browser))]
+            relay_dialer: None,
             server_config,
             tls_config: CaTlsConfig::default()
                 .client_config(crypto_provider.clone())

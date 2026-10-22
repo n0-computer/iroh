@@ -24,6 +24,7 @@ use tokio::net::TcpStream;
 use tracing::{Instrument, error, info_span};
 
 use super::{
+    dialer::RelayDialer,
     streams::{MaybeTlsStream, ProxyStream},
     *,
 };
@@ -34,6 +35,7 @@ pub(super) struct MaybeTlsStreamBuilder {
     url: Url,
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
+    dialer: Option<RelayDialer>,
     prefer_ipv6: bool,
     tls_config: rustls::ClientConfig,
 }
@@ -48,6 +50,7 @@ impl MaybeTlsStreamBuilder {
             url,
             dns_resolver,
             proxy_url: None,
+            dialer: None,
             prefer_ipv6: false,
             tls_config,
         }
@@ -55,6 +58,11 @@ impl MaybeTlsStreamBuilder {
 
     pub(super) fn proxy_url(mut self, proxy_url: Option<Url>) -> Self {
         self.proxy_url = proxy_url;
+        self
+    }
+
+    pub(super) fn dialer(mut self, dialer: Option<RelayDialer>) -> Self {
+        self.dialer = dialer;
         self
     }
 
@@ -72,9 +80,10 @@ impl MaybeTlsStreamBuilder {
 
         let local_addr = tcp_stream
             .local_addr()
+            .transpose()
             .map_err(|_| e!(ConnectError::NoLocalAddr))?;
 
-        debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
+        debug!(server_addr = ?tcp_stream.peer_addr(), ?local_addr, "TCP stream connected");
 
         if self.use_tls() {
             trace!("Starting TLS handshake");
@@ -115,7 +124,20 @@ impl MaybeTlsStreamBuilder {
         &self,
         tls_connector: &tokio_rustls::TlsConnector,
     ) -> Result<ProxyStream, DialError> {
-        if let Some(ref proxy) = self.proxy_url {
+        if let Some(ref dialer) = self.dialer {
+            let host = self.url.host_str().ok_or_else(|| {
+                e!(DialError::InvalidUrl {
+                    url: self.url.clone()
+                })
+            })?;
+            // `Url::host_str` keeps the brackets of IPv6 literals.
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            let port = url_port(&self.url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
+            debug!(%self.url, "dial url via custom dialer");
+            let stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, dialer.dial(host, port))
+                .await??;
+            Ok(ProxyStream::Custom(stream))
+        } else if let Some(ref proxy) = self.proxy_url {
             let stream = self.dial_url_proxy(proxy.clone(), tls_connector).await?;
             Ok(ProxyStream::Proxied(stream))
         } else {

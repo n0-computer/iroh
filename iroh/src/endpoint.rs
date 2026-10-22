@@ -119,6 +119,9 @@ pub use self::{
 #[cfg(not(wasm_browser))]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
+#[cfg(not(wasm_browser))]
+pub use iroh_relay::client::{DialedStream, RelayDialer};
+
 pub use crate::{net_report::NetReportConfig, portmapper::PortmapperConfig};
 
 /// Builder for [`Endpoint`].
@@ -139,6 +142,8 @@ pub struct Builder {
     /// [`Builder::address_lookup`].
     addr_filter: Option<AddrFilter>,
     proxy_url: Option<Url>,
+    #[cfg(not(wasm_browser))]
+    relay_dialer: Option<RelayDialer>,
     ca_tls_config: Option<CaTlsConfig>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
@@ -207,6 +212,8 @@ impl Builder {
             address_lookup_user_data: Default::default(),
             addr_filter: None,
             proxy_url: None,
+            #[cfg(not(wasm_browser))]
+            relay_dialer: None,
             ca_tls_config: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
@@ -273,6 +280,8 @@ impl Builder {
             secret_key,
             address_lookup_user_data: self.address_lookup_user_data,
             proxy_url: self.proxy_url,
+            #[cfg(not(wasm_browser))]
+            relay_dialer: self.relay_dialer,
             #[cfg(not(wasm_browser))]
             dns_resolver,
             server_config,
@@ -698,6 +707,25 @@ impl Builder {
     /// Sets an explicit proxy url to proxy all HTTP(S) traffic through.
     pub fn proxy_url(mut self, url: Url) -> Self {
         self.proxy_url.replace(url);
+        self
+    }
+
+    /// Sets a custom dialer for the TCP connections to relay servers.
+    ///
+    /// The dialer gets the relay's host and port and returns a byte stream;
+    /// TLS and the relay protocol run on top. It replaces DNS resolution, the
+    /// OS socket and any [`Self::proxy_url`] for relay connections and for
+    /// the HTTPS latency probes that choose the home relay. The captive
+    /// portal check is skipped, since it would need plain HTTP to arbitrary
+    /// hosts.
+    ///
+    /// Use this to run the relay connection through a userspace network
+    /// stack such as a VPN tunnel. Combined with
+    /// [`Self::clear_ip_transports`], the endpoint then opens no OS sockets
+    /// for its data path at all.
+    #[cfg(not(wasm_browser))]
+    pub fn relay_dialer(mut self, dialer: RelayDialer) -> Self {
+        self.relay_dialer = Some(dialer);
         self
     }
 

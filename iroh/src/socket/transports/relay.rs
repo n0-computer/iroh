@@ -421,6 +421,8 @@ mod tests {
             secret_key: SecretKey::from_bytes(&[7u8; 32]),
             dns_resolver: DnsResolver::new(),
             proxy_url: None,
+            #[cfg(not(wasm_browser))]
+            relay_dialer: None,
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             tls_config: CaTlsConfig::insecure_skip_verify()
                 .client_config(default_provider())

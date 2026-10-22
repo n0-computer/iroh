@@ -268,11 +268,17 @@ impl Client {
             .quic_config
             .map(|c| iroh_relay::quic::QuicClient::new(c.ep, c.client_config));
 
+        // The captive portal check needs plain HTTP to the relay host,
+        // which a custom relay dialer does not offer.
         #[cfg(not(wasm_browser))]
+        let has_relay_dialer = opts.relay_dialer.is_some();
+        #[cfg(wasm_browser)]
+        let has_relay_dialer = false;
         let socket_state = SocketState {
             quic_client,
             dns_resolver,
             proxy_url: opts.proxy_url,
+            relay_dialer: opts.relay_dialer,
         };
 
         Client {
@@ -286,7 +292,7 @@ impl Client {
             qad_conns: QadConns::default(),
             #[cfg(not(wasm_browser))]
             tls_config: opts.tls_config,
-            captive_portal_check: opts.user_config.captive_portal_check,
+            captive_portal_check: opts.user_config.captive_portal_check && !has_relay_dialer,
         }
     }
 

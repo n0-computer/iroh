@@ -110,6 +110,8 @@ pub(super) struct SocketState {
     pub(super) dns_resolver: DnsResolver,
     /// The proxy to send the HTTP(S) based probes through, if any.
     pub(super) proxy_url: Option<Url>,
+    /// Custom dialer for the HTTPS probes, replaces DNS, OS sockets and the proxy.
+    pub(super) relay_dialer: Option<iroh_relay::client::RelayDialer>,
 }
 
 impl Client {
@@ -529,6 +531,8 @@ impl Probe {
                     tls_config,
                     #[cfg(not(wasm_browser))]
                     socket_state.proxy_url.as_ref(),
+                    #[cfg(not(wasm_browser))]
+                    socket_state.relay_dialer.as_ref(),
                 )
                 .await
                 {
@@ -804,6 +808,12 @@ pub(super) enum MeasureHttpsLatencyError {
     },
     #[error("Error response from server {status}: {:?}", status.canonical_reason())]
     InvalidResponse { status: StatusCode },
+    #[cfg(not(wasm_browser))]
+    #[error("Probe through the relay dialer failed")]
+    Dialer {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
 }
 
 /// Executes an HTTPS probe.
@@ -816,9 +826,19 @@ async fn run_https_probe(
     relay: RelayUrl,
     #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
     #[cfg(not(wasm_browser))] proxy_url: Option<&Url>,
+    #[cfg(not(wasm_browser))] relay_dialer: Option<&iroh_relay::client::RelayDialer>,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
     let url = relay.join(RELAY_PROBE_PATH)?;
+
+    #[cfg(not(wasm_browser))]
+    if let Some(dialer) = relay_dialer {
+        let latency = dialer
+            .probe_latency(&url, tls_config)
+            .await
+            .map_err(|err| e!(MeasureHttpsLatencyError::Dialer, err))?;
+        return Ok(HttpsProbeReport { relay, latency });
+    }
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
@@ -892,6 +912,7 @@ mod tests {
                 .client_config(default_provider())
                 .expect("infallible"),
             None,
+            None,
         )
         .await?;
 
@@ -952,6 +973,7 @@ mod tests {
                 .client_config(default_provider())
                 .expect("infallible"),
             Some(&proxy_url),
+            None,
         )
         .await;
         assert!(
@@ -968,6 +990,40 @@ mod tests {
             "expected the probe to tunnel to {target}, proxy received: {request_line}"
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_measure_https_latency_via_dialer() -> Result {
+        let (_server, relay) = test_utils::relay().await;
+        let dns_resolver = DnsResolver::new();
+        let dialed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dialer = iroh_relay::client::RelayDialer::new({
+            let dialed = dialed.clone();
+            move |host: String, port| {
+                dialed.lock().expect("poisoned").push((host.clone(), port));
+                async move { tokio::net::TcpStream::connect((host.as_str(), port)).await }
+            }
+        });
+        let expected = (
+            relay.url.host_str().expect("relay url has a host").to_string(),
+            relay.url.port().expect("relay url has a port"),
+        );
+
+        let report = run_https_probe(
+            &dns_resolver,
+            relay.url,
+            CaTlsConfig::insecure_skip_verify()
+                .client_config(default_provider())
+                .expect("infallible"),
+            None,
+            Some(&dialer),
+        )
+        .await?;
+
+        assert!(report.latency > Duration::ZERO);
+        assert_eq!(*dialed.lock().expect("poisoned"), vec![expected]);
         Ok(())
     }
 

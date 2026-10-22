@@ -25,6 +25,8 @@ use tracing::{debug, trace};
 use url::Url;
 
 pub use self::conn::{RecvError, SendError};
+#[cfg(not(wasm_browser))]
+pub use self::dialer::{DialedStream, RelayDialer};
 use crate::{
     KeyCache,
     http::{ProtocolVersion, RELAY_PATH},
@@ -35,6 +37,8 @@ use crate::{
 };
 
 pub(crate) mod conn;
+#[cfg(not(wasm_browser))]
+mod dialer;
 #[cfg(not(wasm_browser))]
 pub(crate) mod streams;
 #[cfg(not(wasm_browser))]
@@ -150,6 +154,9 @@ pub struct ClientBuilder {
     tls_config: Option<rustls::ClientConfig>,
     /// HTTP Proxy
     proxy_url: Option<Url>,
+    /// Custom dialer for the TCP connection, replaces DNS, OS sockets and the proxy.
+    #[cfg(not(wasm_browser))]
+    dialer: Option<RelayDialer>,
     /// The secret key of this client.
     secret_key: SecretKey,
     /// Optional authorization token.
@@ -175,6 +182,8 @@ impl ClientBuilder {
             url: url.into(),
             tls_config: None,
             proxy_url: None,
+            #[cfg(not(wasm_browser))]
+            dialer: None,
             secret_key,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -228,6 +237,17 @@ impl ClientBuilder {
     /// Set an explicit proxy url to proxy all HTTP(S) traffic through.
     pub fn proxy_url(mut self, url: Url) -> Self {
         self.proxy_url.replace(url);
+        self
+    }
+
+    /// Sets a custom dialer for the TCP connection to the relay.
+    ///
+    /// The dialer replaces DNS resolution, the OS socket and any
+    /// [`Self::proxy_url`]. TLS and the WebSocket upgrade still run on top
+    /// of the stream it returns.
+    #[cfg(not(wasm_browser))]
+    pub fn dialer(mut self, dialer: RelayDialer) -> Self {
+        self.dialer = Some(dialer);
         self
     }
 
@@ -291,12 +311,14 @@ impl ClientBuilder {
         let mut builder =
             MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone(), tls_config)
                 .prefer_ipv6(self.prefer_ipv6())
-                .proxy_url(self.proxy_url.clone());
+                .proxy_url(self.proxy_url.clone())
+                .dialer(self.dialer.clone());
 
         let stream = builder.connect().await?;
         let local_addr = stream
             .as_ref()
             .local_addr()
+            .transpose()
             .map_err(|_| e!(ConnectError::NoLocalAddr))?;
 
         let mut builder = tokio_websockets::ClientBuilder::new()
@@ -364,10 +386,7 @@ impl ClientBuilder {
 
         trace!("connect done");
 
-        Ok(Client {
-            conn,
-            local_addr: Some(local_addr),
-        })
+        Ok(Client { conn, local_addr })
     }
 
     /// Reports whether IPv4 dials should be slightly

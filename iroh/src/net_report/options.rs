@@ -27,6 +27,8 @@ mod imp {
         ///
         /// If not provided, the probes connect directly.
         pub(crate) proxy_url: Option<Url>,
+        /// Custom dialer for the HTTPS probes, replaces the proxy.
+        pub(crate) relay_dialer: Option<iroh_relay::client::RelayDialer>,
         /// User-facing configuration.
         pub(crate) user_config: NetReportConfig,
     }
@@ -37,12 +39,22 @@ mod imp {
                 quic_config: None,
                 tls_config,
                 proxy_url: None,
+                relay_dialer: None,
                 user_config: NetReportConfig::default(),
             }
         }
         /// Enable quic probes
         pub(crate) fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
             self.quic_config = quic_config;
+            self
+        }
+
+        /// Sets the dialer to send the HTTPS probes through.
+        pub(crate) fn relay_dialer(
+            mut self,
+            relay_dialer: Option<iroh_relay::client::RelayDialer>,
+        ) -> Self {
+            self.relay_dialer = relay_dialer;
             self
         }
 

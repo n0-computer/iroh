@@ -208,6 +208,8 @@ struct RelayConnectionOptions {
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
+    #[cfg(not(wasm_browser))]
+    relay_dialer: Option<iroh_relay::client::RelayDialer>,
     prefer_ipv6: Arc<AtomicBool>,
     tls_config: rustls::ClientConfig,
     auth_token: Option<String>,
@@ -297,6 +299,8 @@ impl ActiveRelayActor {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             proxy_url,
+            #[cfg(not(wasm_browser))]
+            relay_dialer,
             prefer_ipv6,
             tls_config,
             auth_token,
@@ -312,6 +316,10 @@ impl ActiveRelayActor {
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
+        }
+        #[cfg(not(wasm_browser))]
+        if let Some(dialer) = relay_dialer {
+            builder = builder.dialer(dialer);
         }
 
         if let Some(token) = auth_token {
@@ -644,7 +652,12 @@ impl ActiveRelayActor {
                                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
                                 Some(_) => break Err(e!(RunError::LocalIpInvalid)),
-                                None => break Err(e!(RunError::LocalAddrMissing)),
+                                // No OS socket, e.g. a custom relay dialer: just ping.
+                                None => {
+                                    let data = state.ping_tracker.new_ping();
+                                    let fut = client_sink.send(ClientToRelayMsg::Ping(data));
+                                    self.run_sending(fut, &mut state, &mut client_stream).await?;
+                                }
                             }
                         }
                         #[cfg(test)]
@@ -939,6 +952,9 @@ pub(crate) struct Config {
     pub dns_resolver: DnsResolver,
     /// Proxy
     pub proxy_url: Option<Url>,
+    /// Custom dialer for the relay TCP connection.
+    #[cfg(not(wasm_browser))]
+    pub relay_dialer: Option<iroh_relay::client::RelayDialer>,
     /// If the last net_report report, reports IPv6 to be available.
     pub ipv6_reported: Arc<AtomicBool>,
     pub tls_config: rustls::ClientConfig,
@@ -1351,6 +1367,8 @@ impl RelayActor {
             #[cfg(not(wasm_browser))]
             dns_resolver: self.config.dns_resolver.clone(),
             proxy_url: self.config.proxy_url.clone(),
+            #[cfg(not(wasm_browser))]
+            relay_dialer: self.config.relay_dialer.clone(),
             prefer_ipv6: self.config.ipv6_reported.clone(),
             tls_config: self.config.tls_config.clone(),
             auth_token,
@@ -1542,6 +1560,8 @@ mod tests {
             secret_key: SecretKey::from_bytes(&[0u8; 32]),
             dns_resolver: DnsResolver::new(),
             proxy_url: None,
+            #[cfg(not(wasm_browser))]
+            relay_dialer: None,
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             tls_config: CaTlsConfig::insecure_skip_verify()
                 .client_config(default_provider())
@@ -1585,6 +1605,8 @@ mod tests {
                 secret_key,
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
+                #[cfg(not(wasm_browser))]
+                relay_dialer: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 tls_config: CaTlsConfig::insecure_skip_verify()
                     .client_config(default_provider())
@@ -1950,6 +1972,8 @@ mod tests {
                 secret_key,
                 dns_resolver: DnsResolver::new(),
                 proxy_url: None,
+                #[cfg(not(wasm_browser))]
+                relay_dialer: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 tls_config: CaTlsConfig::insecure_skip_verify()
                     .client_config(default_provider())

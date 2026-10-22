@@ -10,7 +10,7 @@ use tokio::{
     net::TcpStream,
 };
 
-use super::util;
+use super::{dialer::DialedStream, util};
 use crate::ExportKeyingMaterial;
 
 #[derive(Debug)]
@@ -18,6 +18,14 @@ use crate::ExportKeyingMaterial;
 pub(crate) enum ProxyStream {
     Raw(TcpStream),
     Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<TcpStream>>),
+    /// A stream opened by a [`super::RelayDialer`].
+    Custom(Box<dyn DialedStream>),
+}
+
+impl std::fmt::Debug for dyn DialedStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DialedStream")
+    }
 }
 
 impl AsyncRead for ProxyStream {
@@ -29,6 +37,7 @@ impl AsyncRead for ProxyStream {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_read(cx, buf),
             Self::Proxied(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Custom(stream) => Pin::new(stream).poll_read(cx, buf),
         }
     }
 }
@@ -42,6 +51,7 @@ impl AsyncWrite for ProxyStream {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_write(cx, buf),
             Self::Proxied(stream) => Pin::new(stream.get_mut().1).poll_write(cx, buf),
+            Self::Custom(stream) => Pin::new(stream).poll_write(cx, buf),
         }
     }
 
@@ -52,6 +62,7 @@ impl AsyncWrite for ProxyStream {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_flush(cx),
             Self::Proxied(stream) => Pin::new(stream.get_mut().1).poll_flush(cx),
+            Self::Custom(stream) => Pin::new(stream).poll_flush(cx),
         }
     }
 
@@ -62,6 +73,7 @@ impl AsyncWrite for ProxyStream {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_shutdown(cx),
             Self::Proxied(stream) => Pin::new(stream.get_mut().1).poll_shutdown(cx),
+            Self::Custom(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
 
@@ -73,6 +85,7 @@ impl AsyncWrite for ProxyStream {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             Self::Proxied(stream) => Pin::new(stream.get_mut().1).poll_write_vectored(cx, bufs),
+            Self::Custom(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
         }
     }
 
@@ -80,22 +93,26 @@ impl AsyncWrite for ProxyStream {
         match self {
             ProxyStream::Raw(stream) => stream.is_write_vectored(),
             ProxyStream::Proxied(stream) => stream.get_ref().1.is_write_vectored(),
+            ProxyStream::Custom(stream) => stream.is_write_vectored(),
         }
     }
 }
 
 impl ProxyStream {
-    pub(super) fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    /// The local address of the OS socket, or `None` for a [`Self::Custom`] stream.
+    pub(super) fn local_addr(&self) -> Option<std::io::Result<SocketAddr>> {
         match self {
-            Self::Raw(s) => s.local_addr(),
-            Self::Proxied(s) => s.get_ref().1.as_ref().local_addr(),
+            Self::Raw(s) => Some(s.local_addr()),
+            Self::Proxied(s) => Some(s.get_ref().1.as_ref().local_addr()),
+            Self::Custom(_) => None,
         }
     }
 
-    pub(super) fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+    pub(super) fn peer_addr(&self) -> Option<std::io::Result<SocketAddr>> {
         match self {
-            Self::Raw(s) => s.peer_addr(),
-            Self::Proxied(s) => s.get_ref().1.as_ref().peer_addr(),
+            Self::Raw(s) => Some(s.peer_addr()),
+            Self::Proxied(s) => Some(s.get_ref().1.as_ref().peer_addr()),
+            Self::Custom(_) => None,
         }
     }
 }
