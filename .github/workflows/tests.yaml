@@ -32,30 +32,9 @@ permissions:
   contents: read
 
 jobs:
-  pick-runner:
-    uses: "$/.github/workflows/pick-runner.yml"
-    with:
-      min_free_runners: 3
-    secrets:
-      RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
-
-  # Windows overflow routing onto Blacksmith, with its own idle count and an
-  # independent Blacksmith cap of 4 (see blacksmith_busy_match: windows).
-  pick-runner-windows:
-    uses: "$/.github/workflows/pick-runner.yml"
-    with:
-      core_runner: '["self-hosted","windows","x64"]'
-      overflow_runner: '["blacksmith-4vcpu-windows-2025"]'
-      blacksmith_busy_match: windows
-      max_blacksmith_concurrent: 4
-      min_free_runners: 1
-    secrets:
-      RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
-
   build_and_test_nix:
     timeout-minutes: 30
     name: "Tests"
-    needs: pick-runner
     runs-on: ${{ fromJSON(matrix.runs_on) }}
     strategy:
       fail-fast: false
@@ -63,48 +42,20 @@ jobs:
         name: [ubuntu-latest, macOS-arm-latest]
         rust: ["${{ inputs.rust-version }}"]
         features: [all, none, default]
-        include:                                                                                                                                                         
-            # ubuntu cells route via pick-runner slots 1-3                                                                                                                 
-            - name: ubuntu-latest                                                                                   
-              features: all                                                                                                                                                
-              os: ubuntu-latest
-              release-os: linux                                                                                                                                            
-              release-arch: amd64                                                                                                                                          
-              runs_on: ${{ needs.pick-runner.outputs.overflow_1 }}
-            - name: ubuntu-latest                                                                                                                                          
-              features: none                                                                                                                                               
-              os: ubuntu-latest       
-              release-os: linux                                                                                                                                            
-              release-arch: amd64                                                                                   
-              runs_on: ${{ needs.pick-runner.outputs.overflow_2 }}
-            - name: ubuntu-latest                                                                                                                                          
-              features: default
-              os: ubuntu-latest                                                                                                                                            
-              release-os: linux                                                                                     
-              release-arch: amd64     
-              runs_on: ${{ needs.pick-runner.outputs.overflow_3 }}
-            # mac cells always stay on self-hosted mac (not in the routing pool)                                                                                           
-            - name: macOS-arm-latest                                                                                                                                       
-              features: all                                                                                                                                                
-              os: macOS-latest                                                                                                                                             
-              release-os: darwin                                                                                                                                           
-              release-arch: aarch64   
-              runs_on: '["self-hosted","macOS","ARM64"]'                                                                                                                   
-            - name: macOS-arm-latest                                                                                
-              features: none                                                                                                                                               
-              os: macOS-latest
-              release-os: darwin                                                                                                                                           
-              release-arch: aarch64                                                                                 
-              runs_on: '["self-hosted","macOS","ARM64"]'
-            - name: macOS-arm-latest                                                                                                                                       
-              features: default
-              os: macOS-latest                                                                                                                                             
-              release-os: darwin                                                                                    
-              release-arch: aarch64   
-              runs_on: '["self-hosted","macOS","ARM64"]'
+        include:
+          - name: ubuntu-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            runs_on: '["blacksmith-8vcpu-ubuntu-2404"]'
+          - name: macOS-arm-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: aarch64
+            runs_on: '["self-hosted","macOS","ARM64"]'
     env:
-      # Using self-hosted runners so use local cache for sccache and
-      # not SCCACHE_GHA_ENABLED.
+      # sccache backend is selected at runtime in "Configure sccache backend":
+      # local disk on self-hosted macOS, GHA-backed on Blacksmith (ephemeral).
       RUSTC_WRAPPER: "sccache"
     steps:
       - name: Configure sccache backend                                                                               
@@ -220,8 +171,7 @@ jobs:
   build_and_test_windows:
     timeout-minutes: 30
     name: "Tests"
-    needs: pick-runner-windows
-    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    runs-on: blacksmith-8vcpu-windows-2025
     strategy:
       fail-fast: false
       matrix:
@@ -230,40 +180,15 @@ jobs:
         features: [all, none, default]
         target:
           - x86_64-pc-windows-msvc
-        include:
-          # windows cells route via pick-runner-windows slots 1-3
-          - name: windows-latest
-            features: all
-            os: windows
-            runs_on: ${{ needs.pick-runner-windows.outputs.overflow_1 }}
-          - name: windows-latest
-            features: none
-            os: windows
-            runs_on: ${{ needs.pick-runner-windows.outputs.overflow_2 }}
-          - name: windows-latest
-            features: default
-            os: windows
-            runs_on: ${{ needs.pick-runner-windows.outputs.overflow_3 }}
     env:
-      # sccache backend is selected at runtime in "Configure sccache backend":
-      # local disk on self-hosted, GHA-backed on Blacksmith (ephemeral).
       RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
       # Installing a toolchain does not select it, so without this every cargo
       # invocation below uses whatever the runner image ships as rustup default.
-      # As an env var this applies to the job only; `rustup default` would
-      # rewrite the default of the shared self-hosted runner for other jobs.
+      # As an env var this applies to the job only and leaves the image's
+      # rustup default untouched.
       RUSTUP_TOOLCHAIN: "${{ matrix.rust }}"
     steps:
-      - name: Configure sccache backend
-        shell: bash
-        run: |
-            if [[ "${RUNNER_NAME:-}" == blacksmith-* ]]; then
-              echo "Runner: $RUNNER_NAME → GHA-backed sccache"
-              echo "SCCACHE_GHA_ENABLED=on" >> "$GITHUB_ENV"
-            else
-              echo "Runner: $RUNNER_NAME → local-disk sccache"
-              # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk
-            fi
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -320,9 +245,8 @@ jobs:
 
       - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
-          # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64),
-          # so install it there. Self-hosted keeps the pre-installed one (faster).
-          release: ${{ startsWith(runner.name, 'blacksmith-') }}
+          # Blacksmith's Windows image ships no pre-installed MSYS2 (C:\msys64).
+          release: true
 
       - name: Install aws-lc-sys build dependencies
         shell: powershell
