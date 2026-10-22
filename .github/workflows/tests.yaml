@@ -35,7 +35,7 @@ jobs:
   build_and_test_nix:
     timeout-minutes: 30
     name: "Tests"
-    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    runs-on: ${{ matrix.runs_on }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,27 +47,16 @@ jobs:
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
-            runs_on: '["blacksmith-8vcpu-ubuntu-2404"]'
+            runs_on: blacksmith-8vcpu-ubuntu-2404
           - name: macOS-arm-latest
             os: macOS-latest
             release-os: darwin
             release-arch: aarch64
-            runs_on: '["self-hosted","macOS","ARM64"]'
+            runs_on: blacksmith-6vcpu-macos-26
     env:
-      # sccache backend is selected at runtime in "Configure sccache backend":
-      # local disk on self-hosted macOS, GHA-backed on Blacksmith (ephemeral).
       RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
-      - name: Configure sccache backend                                                                               
-        shell: bash                     
-        run: |
-            if [[ "${RUNNER_NAME:-}" == blacksmith-* ]]; then                                                                                                                  
-              echo "Runner: $RUNNER_NAME → GHA-backed sccache"
-              echo "SCCACHE_GHA_ENABLED=on" >> "$GITHUB_ENV"                                                                                                                   
-            else                                                                                                                                                               
-              echo "Runner: $RUNNER_NAME → local-disk sccache"                                                                                                                 
-              # leave SCCACHE_GHA_ENABLED unset; sccache defaults to local disk                                                                                                
-            fi     
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
