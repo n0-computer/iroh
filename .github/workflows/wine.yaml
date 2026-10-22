@@ -42,7 +42,7 @@ jobs:
           WINEARCH=win64 wineboot --init
 
       - name: Install Rust + mingw target
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
           targets: x86_64-pc-windows-gnu
@@ -51,7 +51,7 @@ jobs:
         run: sudo apt-get install -y mingw-w64
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: nextest
 
