@@ -2,6 +2,24 @@
 
 All notable changes to iroh will be documented in this file.
 
+<!-- git-cliff: end of header -->
+## [1.4.1](https://github.com/n0-computer/iroh/compare/v1.4.0..1.4.1) - 2026-10-21
+
+### 🧪 Testing
+
+- *(iroh)* More generous timeouts for slow CI boxes ([#4626](https://github.com/n0-computer/iroh/issues/4626)) - ([467bf23](https://github.com/n0-computer/iroh/commit/467bf239ca9b3c9d46062e638535e318ee375a4b))
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix changelog ([#4628](https://github.com/n0-computer/iroh/issues/4628)) - ([efcb1c3](https://github.com/n0-computer/iroh/commit/efcb1c3f987127529458f2734a076acacf0254e3))
+- Additional git-cliff fixes - ([60259e1](https://github.com/n0-computer/iroh/commit/60259e1d8ee01c4a86b6e6ab2cebaae991cd1181))
+
+### Deps
+
+- Update rustls-webpki to remove untrusted SPKI ([#4624](https://github.com/n0-computer/iroh/issues/4624)) - ([3f4ce2f](https://github.com/n0-computer/iroh/commit/3f4ce2fe170e760386d392d58fb5632e9f1e4b96))
+
+
+
 ## [1.4.0](https://github.com/n0-computer/iroh/compare/v1.3.0..1.4.0) - 2026-10-20
 
 ### ⛰️  Features
@@ -46,10 +64,6 @@ All notable changes to iroh will be documented in this file.
 - Fixup some linting infra ([#4609](https://github.com/n0-computer/iroh/issues/4609)) - ([0a3ef1a](https://github.com/n0-computer/iroh/commit/0a3ef1a5a88e5f29c2770de12b96b113bfc841ac))
 - Trigger some more CI steps for the merge group ([#4618](https://github.com/n0-computer/iroh/issues/4618)) - ([62d71c5](https://github.com/n0-computer/iroh/commit/62d71c564e50d9f2f46234d7c96c93bff51dd3ca))
 - Update noq dependency - ([d506cb9](https://github.com/n0-computer/iroh/commit/d506cb967599c0d1901becf591e286930a8b48d2))
-
-# Changelog
-
-All notable changes to iroh will be documented in this file.
 
 ## [1.3.0](https://github.com/n0-computer/iroh/compare/v1.2.0..1.3.0) - 2026-09-28
 

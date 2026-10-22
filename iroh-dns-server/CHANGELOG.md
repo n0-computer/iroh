@@ -2,6 +2,15 @@
 
 All notable changes to iroh-dns-server will be documented in this file.
 
+<!-- git-cliff: end of header -->
+## [1.4.1](https://github.com/n0-computer/iroh/compare/v1.4.0..1.4.1) - 2026-10-21
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix changelog ([#4628](https://github.com/n0-computer/iroh/issues/4628)) - ([efcb1c3](https://github.com/n0-computer/iroh/commit/efcb1c3f987127529458f2734a076acacf0254e3))
+
+
+
 ## [1.4.0](https://github.com/n0-computer/iroh/compare/v1.3.0..1.4.0) - 2026-10-20
 
 ### 🐛 Bug Fixes
@@ -13,10 +22,6 @@ All notable changes to iroh-dns-server will be documented in this file.
 ### 🚜 Refactor
 
 - *(iroh-dns-server)* Update clap usage to modern v4 APIs ([#4567](https://github.com/n0-computer/iroh/issues/4567)) - ([12cd62b](https://github.com/n0-computer/iroh/commit/12cd62b5d1d689d4595b3770ca14bf58c44d3fc3))
-
-# Changelog
-
-All notable changes to iroh-dns-server will be documented in this file.
 
 ## [1.3.0](https://github.com/n0-computer/iroh/compare/v1.2.0..1.3.0) - 2026-09-28
 
