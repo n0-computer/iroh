@@ -40,6 +40,8 @@ pub mod quic;
 mod relay_map;
 #[cfg(feature = "server")]
 pub mod server;
+#[cfg(not(wasm_browser))]
+pub mod socket;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod tls;

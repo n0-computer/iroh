@@ -11,6 +11,8 @@ use std::{
 use bytes::Bytes;
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
+#[cfg(not(wasm_browser))]
+use iroh_relay::socket::ConfigureSocket;
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use tokio_util::sync::CancellationToken;
@@ -190,6 +192,7 @@ impl Transports {
         relay_actor_config: RelayActorConfig,
         metrics: &EndpointMetrics,
         shutdown_token: CancellationToken,
+        #[cfg(not(wasm_browser))] configure_socket: Option<ConfigureSocket>,
     ) -> io::Result<Self> {
         #[cfg(not(wasm_browser))]
         let ip_configs = {
@@ -220,7 +223,7 @@ impl Transports {
             ip_configs
         };
         #[cfg(not(wasm_browser))]
-        let ip = IpTransports::bind(ip_configs.into_iter(), metrics)?;
+        let ip = IpTransports::bind(ip_configs.into_iter(), metrics, configure_socket)?;
 
         let relay = configs
             .iter()
@@ -1327,7 +1330,7 @@ mod tests {
             let (sender, receiver) = RelaySender::bounded_for_test(capacity);
             let sender = TransportsSender {
                 #[cfg(not(wasm_browser))]
-                ip: IpTransports::bind(ip_configs, &EndpointMetrics::default())
+                ip: IpTransports::bind(ip_configs, &EndpointMetrics::default(), None)
                     .expect("test transports must bind")
                     .create_sender(),
                 relay: vec![sender],
@@ -1383,7 +1386,7 @@ mod tests {
         let metrics = EndpointMetrics::default();
         Transports {
             #[cfg(not(wasm_browser))]
-            ip: ip::IpTransports::bind(std::iter::empty(), &metrics).unwrap(),
+            ip: ip::IpTransports::bind(std::iter::empty(), &metrics, None).unwrap(),
             relay: Vec::new(),
             custom,
             poll_recv_counter: 0,

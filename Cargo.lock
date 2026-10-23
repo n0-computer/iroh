@@ -2247,6 +2247,7 @@ dependencies = [
  "serde_json",
  "simple-dns",
  "smallvec",
+ "socket2",
  "strum",
  "testdir",
  "time",
@@ -3070,12 +3071,12 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.19.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39da9cad5f23aa43401f09497d3b280e51b5feba115d9ffbf38ca35d6ff95e96"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#f232afc83805c48be96805baefee9676c8fb6a83"
 dependencies = [
  "atomic-waker",
  "bytes",
  "cfg_aliases",
+ "chrono",
  "derive_more",
  "ipnet",
  "js-sys",

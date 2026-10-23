@@ -107,6 +107,7 @@ simple-dns = "0.12"
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 assert_matches = "1.5.0"
 axum = { version = "0.8" }
+socket2 = { version = "0.6", features = ["all"] }
 pretty_assertions = "1.4"
 rand_chacha = "0.10"
 tokio = { version = "1", features = [

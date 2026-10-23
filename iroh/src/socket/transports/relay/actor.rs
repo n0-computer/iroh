@@ -39,6 +39,8 @@ use std::{
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
+#[cfg(not(wasm_browser))]
+use iroh_relay::socket::ConfigureSocket;
 use iroh_relay::{
     self as relay, PingTracker, RelayMap,
     client::{Client, ConnectError, RecvError, SendError},
@@ -202,7 +204,7 @@ struct ActiveRelayActorOptions {
 }
 
 /// Configuration needed to create a connection to a relay server.
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 struct RelayConnectionOptions {
     secret_key: SecretKey,
     #[cfg(not(wasm_browser))]
@@ -211,6 +213,9 @@ struct RelayConnectionOptions {
     prefer_ipv6: Arc<AtomicBool>,
     tls_config: rustls::ClientConfig,
     auth_token: Option<String>,
+    #[cfg(not(wasm_browser))]
+    #[debug(skip)]
+    configure_socket: Option<ConfigureSocket>,
 }
 
 /// Possible reasons for a failed relay connection.
@@ -300,6 +305,8 @@ impl ActiveRelayActor {
             prefer_ipv6,
             tls_config,
             auth_token,
+            #[cfg(not(wasm_browser))]
+            configure_socket,
         } = opts;
 
         let mut builder = relay::client::ClientBuilder::new(
@@ -312,6 +319,11 @@ impl ActiveRelayActor {
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
+        }
+
+        #[cfg(not(wasm_browser))]
+        if let Some(configure) = configure_socket {
+            builder = builder.configure_socket(configure);
         }
 
         if let Some(token) = auth_token {
@@ -931,7 +943,7 @@ pub(super) struct RelayActor {
     cancel_token: CancellationToken,
 }
 
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 pub(crate) struct Config {
     pub my_relay: HomeRelayWatch,
     pub secret_key: SecretKey,
@@ -946,6 +958,10 @@ pub(crate) struct Config {
     /// Per-relay configuration. Consulted when starting a connection to
     /// look up the auth token and any future per-relay options.
     pub relay_map: RelayMap,
+    /// Hook run on the socket of each relay connection before it is dialed.
+    #[cfg(not(wasm_browser))]
+    #[debug(skip)]
+    pub configure_socket: Option<ConfigureSocket>,
 }
 
 /// Connection state of the home relay.
@@ -1354,6 +1370,8 @@ impl RelayActor {
             prefer_ipv6: self.config.ipv6_reported.clone(),
             tls_config: self.config.tls_config.clone(),
             auth_token,
+            #[cfg(not(wasm_browser))]
+            configure_socket: self.config.configure_socket.clone(),
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1548,6 +1566,7 @@ mod tests {
                 .expect("infallible"),
             metrics: Default::default(),
             relay_map: RelayMap::empty(),
+            configure_socket: None,
         };
         let mut actor =
             RelayActor::new(config, relay_datagram_recv_queue, CancellationToken::new());
@@ -1590,6 +1609,8 @@ mod tests {
                     .client_config(default_provider())
                     .expect("infallible"),
                 auth_token: None,
+                #[cfg(not(wasm_browser))]
+                configure_socket: None,
             },
             stop_token,
             metrics,
@@ -1955,6 +1976,8 @@ mod tests {
                     .client_config(default_provider())
                     .expect("infallible"),
                 auth_token: None,
+                #[cfg(not(wasm_browser))]
+                configure_socket: None,
             },
             stop_token: CancellationToken::new(),
             metrics: Default::default(),

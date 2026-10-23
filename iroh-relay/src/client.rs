@@ -25,6 +25,8 @@ use tracing::{debug, trace};
 use url::Url;
 
 pub use self::conn::{RecvError, SendError};
+#[cfg(not(wasm_browser))]
+use crate::socket::ConfigureSocket;
 use crate::{
     KeyCache,
     http::{ProtocolVersion, RELAY_PATH},
@@ -161,6 +163,10 @@ pub struct ClientBuilder {
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote endpoints.
     key_cache: KeyCache,
+    /// Hook run on the dialed socket before it connects.
+    #[cfg(not(wasm_browser))]
+    #[debug(skip)]
+    configure_socket: Option<ConfigureSocket>,
 }
 
 impl ClientBuilder {
@@ -180,7 +186,21 @@ impl ClientBuilder {
             dns_resolver,
             key_cache: KeyCache::new(128),
             auth_token: None,
+            #[cfg(not(wasm_browser))]
+            configure_socket: None,
         }
+    }
+
+    /// Sets a hook to configure the socket used for the relay connection.
+    ///
+    /// Use it to set `SO_MARK` or `SO_BINDTODEVICE` on Linux, or `IP_BOUND_IF`
+    /// on Apple platforms. On Windows, `IP_UNICAST_IF` selects an outgoing IPv4
+    /// interface and `IPV6_UNICAST_IF` selects an outgoing IPv6 interface;
+    /// both take an interface index. The hook's target identifies the family.
+    #[cfg(not(wasm_browser))]
+    pub fn configure_socket(mut self, configure: ConfigureSocket) -> Self {
+        self.configure_socket = Some(configure);
+        self
     }
 
     /// Sets a custom TLS config.
@@ -291,7 +311,8 @@ impl ClientBuilder {
         let mut builder =
             MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone(), tls_config)
                 .prefer_ipv6(self.prefer_ipv6())
-                .proxy_url(self.proxy_url.clone());
+                .proxy_url(self.proxy_url.clone())
+                .configure_socket(self.configure_socket.clone());
 
         let stream = builder.connect().await?;
         let local_addr = stream
