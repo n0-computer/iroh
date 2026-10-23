@@ -375,6 +375,17 @@ impl RemoteStateActor {
                 };
                 tx.send(info).ok();
             }
+            RemoteStateMessage::ProbeCustomAddrs(addrs) => {
+                let addrs = to_transports_addr(self.state.endpoint_id, addrs).collect::<Vec<_>>();
+                self.state
+                    .paths
+                    .insert_multiple(addrs.iter().cloned(), Source::App);
+                for addr in addrs {
+                    if let transports::Addr::Custom(_) = addr {
+                        self.open_path_on_all_conns(&transports::FourTuple::from_remote(addr));
+                    }
+                }
+            }
             RemoteStateMessage::NetworkChange { is_major } => {
                 self.handle_msg_network_change(is_major);
             }
@@ -1218,6 +1229,13 @@ pub(crate) enum RemoteStateMessage {
     ///
     /// This currently only includes a list of all known transport addresses for the remote.
     RemoteInfo(oneshot::Sender<RemoteInfo>),
+    /// Presents addresses the caller believes the remote is additionally reachable at.
+    ///
+    /// Inserts them as candidates and probes any [`TransportAddr::Custom`] ones on existing
+    /// connections — custom transports have no other path-opening mechanism (IP has QNT,
+    /// relay is dialed directly), so an explicit hint is how a custom path that became
+    /// viable after connecting gets opened without redialing.
+    ProbeCustomAddrs(BTreeSet<TransportAddr>),
     /// The network status has changed in some way
     NetworkChange { is_major: bool },
 }

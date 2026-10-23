@@ -741,4 +741,73 @@ mod tests {
         router.shutdown().await.anyerr()?;
         Ok(())
     }
+
+    /// Test that `Endpoint::add_remote_addrs` opens a custom-transport path on
+    /// an already-established connection.
+    ///
+    /// The connection is dialed with IP addresses only, so the custom addr is
+    /// never a dial-time candidate. Presenting it afterwards probes the custom
+    /// path on the live connection and selection migrates to it.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_add_remote_addrs_opens_custom_path() -> Result<()> {
+        use std::collections::BTreeSet;
+
+        let network = TestNetwork::new();
+        let s1 = SecretKey::generate();
+        let s2 = SecretKey::generate();
+
+        let t1 = network.create_transport(s1.public())?;
+        let t2 = network.create_transport(s2.public())?;
+
+        let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_secs(10));
+        let config = EndpointConfig::default()
+            .with_ip()
+            .with_custom_bias(custom_bias);
+
+        let ep1 = endpoint_builder(s1, t1, config.clone()).bind().await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, config).bind().await?;
+        let router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
+
+        // Dial by IP only: the custom addr is not presented at connect time.
+        let ip_only = EndpointAddr::from_parts(
+            s2.public(),
+            ep2.addr().addrs.iter().filter(|a| a.is_ip()).cloned(),
+        );
+        let conn = ep1.connect(ip_only, ECHO_ALPN).await?;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !conn.paths().iter().any(|p| p.remote_addr().is_custom()),
+            "no custom path should exist before add_remote_addrs"
+        );
+
+        // The custom addr becomes viable mid-connection.
+        ep1.add_remote_addrs(
+            s2.public(),
+            BTreeSet::from([TransportAddr::Custom(to_custom_addr(s2.public()))]),
+        )
+        .await;
+
+        // The path opens on the live connection and selection migrates to it.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if conn
+                    .paths()
+                    .iter()
+                    .any(|p| p.remote_addr().is_custom() && p.is_selected())
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("custom path should open and become selected");
+
+        verify_echo(&conn, b"migrated to custom").await?;
+        conn.close(0u32.into(), b"done");
+        router.shutdown().await.anyerr()?;
+        Ok(())
+    }
 }
