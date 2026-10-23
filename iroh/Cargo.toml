@@ -254,3 +254,7 @@ required-features = ["tls-aws-lc-rs"]
 [[example]]
 name = "home-relay-status"
 required-features = []
+
+[[example]]
+name = "pinned-ca-roots"
+required-features = []
