@@ -4240,4 +4240,130 @@ mod tests {
 
         Ok(())
     }
+
+    /// Verifies that replacing a relay's [`RelayConfig`] via [`Endpoint::insert_relay`]
+    /// makes an endpoint which was rejected for a bad auth token connect with the new token,
+    /// without waiting for the reconnect backoff.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_relay_auth_token_fixed_via_insert_relay() -> Result {
+        const TOKEN: &str = "valid-token";
+
+        #[derive(Debug)]
+        struct TokenAccess(&'static str);
+
+        impl iroh_relay::server::AccessControl for TokenAccess {
+            async fn on_connect(&self, request: &iroh_relay::server::ClientRequest) -> Access {
+                if request.auth_token().as_deref() == Some(self.0) {
+                    Access::Allow
+                } else {
+                    Access::Deny { reason: None }
+                }
+            }
+        }
+
+        let access = Arc::new(TokenAccess(TOKEN));
+        let (_relay_map, relay_url, _guard) = run_relay_server_with_access(false, access).await?;
+
+        let bad_map: RelayMap = RelayConfig::new(relay_url.clone(), None)
+            .with_auth_token("wrong-token")
+            .into();
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(bad_map))
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+
+        // Wait until the relay rejected the wrong token.
+        let mut stream = ep.home_relay_status().stream();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(status) = stream.next().await {
+                if status.iter().any(|s| s.last_error().is_some()) {
+                    return;
+                }
+            }
+            panic!("home relay stream ended");
+        })
+        .await
+        .std_context("waiting for auth error")?;
+
+        // Replace the config with the correct token: the existing relay connection
+        // must pick it up.
+        let fixed = RelayConfig::new(relay_url.clone(), None).with_auth_token(TOKEN);
+        ep.insert_relay(relay_url, Arc::new(fixed)).await;
+        tokio::time::timeout(Duration::from_secs(5), ep.online())
+            .await
+            .std_context("waiting for endpoint to come online with the new token")?;
+
+        Ok(())
+    }
+
+    /// Verifies that rotating the auth token of the home relay via
+    /// [`Endpoint::insert_relay`] re-establishes the relay connection with the new token,
+    /// and that re-inserting an unchanged config does not.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_endpoint_relay_auth_token_rotation() -> Result {
+        /// Admits every connection and records the auth tokens it saw.
+        #[derive(Debug, Default)]
+        struct RecordTokens(std::sync::Mutex<Vec<Option<String>>>);
+
+        impl iroh_relay::server::AccessControl for RecordTokens {
+            async fn on_connect(&self, request: &iroh_relay::server::ClientRequest) -> Access {
+                self.0.lock().expect("poisoned").push(request.auth_token());
+                Access::Allow
+            }
+        }
+
+        let access = Arc::new(RecordTokens::default());
+        let (_relay_map, relay_url, _guard) =
+            run_relay_server_with_access(false, access.clone()).await?;
+
+        let map: RelayMap = RelayConfig::new(relay_url.clone(), None)
+            .with_auth_token("token-a")
+            .into();
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(map))
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+            .bind()
+            .await?;
+        tokio::time::timeout(Duration::from_secs(5), ep.online())
+            .await
+            .std_context("waiting for endpoint to come online")?;
+        assert_eq!(
+            access.0.lock().expect("poisoned").as_slice(),
+            [Some("token-a".to_string())]
+        );
+
+        let rotated =
+            Arc::new(RelayConfig::new(relay_url.clone(), None).with_auth_token("token-b"));
+        ep.insert_relay(relay_url.clone(), rotated.clone()).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if access
+                    .0
+                    .lock()
+                    .expect("poisoned")
+                    .contains(&Some("token-b".to_string()))
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .std_context("waiting for a relay connection with the rotated token")?;
+        tokio::time::timeout(Duration::from_secs(5), ep.online())
+            .await
+            .std_context("waiting for endpoint to come back online")?;
+
+        // Re-inserting an equal config must not restart the connection.
+        let seen = access.0.lock().expect("poisoned").len();
+        ep.insert_relay(relay_url, Arc::new(rotated.as_ref().clone()))
+            .await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(access.0.lock().expect("poisoned").len(), seen);
+
+        Ok(())
+    }
 }
