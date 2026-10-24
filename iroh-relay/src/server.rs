@@ -57,7 +57,7 @@ use tracing::{Instrument, debug, error, info, info_span, instrument};
 use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
-    http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_PATH},
+    http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_RELATIVE_PATH},
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
     tls::CaTlsConfig,
 };
@@ -736,7 +736,7 @@ impl Server {
                     .access(relay_config.access)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
-                    .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
+                    .request_handler(Method::GET, probe_route(), Box::new(probe_handler))
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler))
                     .request_handler(Method::GET, "/healthz", Box::new(healthz_handler));
                 if let Some(cfg) = relay_config.limits.client_rx {
@@ -1185,6 +1185,17 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
             }
         }
     }
+}
+
+/// The route latency probes are served on: [`RELAY_PROBE_RELATIVE_PATH`] at the root.
+///
+/// Built once and kept in a static only because [`Handlers`] keys its routes by
+/// `&'static str`. Changing [`Handlers`] to take a `String` would remove the need
+/// for this.
+fn probe_route() -> &'static str {
+    static ROUTE: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| format!("/{RELAY_PROBE_RELATIVE_PATH}"));
+    ROUTE.as_str()
 }
 
 #[cfg(test)]

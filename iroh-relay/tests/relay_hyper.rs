@@ -21,7 +21,7 @@ use iroh_dns::dns::DnsResolver;
 use iroh_relay::{
     KeyCache,
     client::ClientBuilder,
-    http::{RELAY_PATH, RELAY_PROBE_PATH},
+    http::{RELAY_PROBE_RELATIVE_PATH, RELAY_RELATIVE_PATH},
     server::{
         AllowAll, Metrics,
         http_server::{BytesBody, Handlers, RelayService, RelayServiceWithNotify},
@@ -36,13 +36,13 @@ use rand::{RngExt, SeedableRng};
 use tokio::{net::TcpListener, sync::Notify};
 
 async fn dispatch(req: Request<Incoming>, service: RelayService) -> Response<BytesBody> {
-    match (req.method(), req.uri().path()) {
-        (&Method::GET, RELAY_PROBE_PATH) => Response::builder()
+    match (req.method(), req.uri().path().strip_prefix('/')) {
+        (&Method::GET, Some(RELAY_PROBE_RELATIVE_PATH)) => Response::builder()
             .status(StatusCode::OK)
             .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(Box::new(Full::new(Bytes::new())) as BytesBody)
             .expect("valid response"),
-        (&Method::GET, RELAY_PATH) => RelayServiceWithNotify::with_timeout(
+        (&Method::GET, Some(RELAY_RELATIVE_PATH)) => RelayServiceWithNotify::with_timeout(
             service,
             Arc::new(Notify::new()),
             Duration::from_secs(30),

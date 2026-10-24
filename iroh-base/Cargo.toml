@@ -25,6 +25,7 @@ rand = { version = "0.10", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 n0-error = "1.0.0"
 zeroize = { version = "1.9", optional = true, features = ["derive"] }
+tracing = { version = "0.1", optional = true }
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
@@ -55,6 +56,7 @@ key = [
 relay = [
   "dep:url",
   "dep:derive_more",
+  "dep:tracing",
 ]
 
 [package.metadata.docs.rs]

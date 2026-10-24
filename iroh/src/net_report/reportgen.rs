@@ -30,7 +30,7 @@ use iroh_dns::dns::{DnsError, DnsResolver, StaggeredError};
 #[cfg(not(wasm_browser))]
 use iroh_relay::quic::QuicClient;
 use iroh_relay::{
-    RelayConfig, RelayMap, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH,
+    RelayConfig, RelayMap, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_RELATIVE_PATH,
 };
 use n0_error::{e, stack_error};
 #[cfg(wasm_browser)]
@@ -821,7 +821,7 @@ async fn run_https_probe(
     #[cfg(not(wasm_browser))] proxy_url: Option<&Url>,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
-    let url = relay.join(RELAY_PROBE_PATH)?;
+    let url = relay.join(RELAY_PROBE_RELATIVE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
