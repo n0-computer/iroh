@@ -1188,6 +1188,10 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
 }
 
 /// The route latency probes are served on: [`RELAY_PROBE_RELATIVE_PATH`] at the root.
+///
+/// Built once and kept in a static only because [`Handlers`] keys its routes by
+/// `&'static str`. Changing [`Handlers`] to take a `String` would remove the need
+/// for this.
 fn probe_route() -> &'static str {
     static ROUTE: std::sync::LazyLock<String> =
         std::sync::LazyLock::new(|| format!("/{RELAY_PROBE_RELATIVE_PATH}"));
