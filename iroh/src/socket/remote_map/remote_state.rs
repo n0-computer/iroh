@@ -804,11 +804,7 @@ impl State {
 
         let targets = if let Some(addr) = self.selected_path.as_ref() {
             trace!(?addr, "sending datagram to selected path");
-
-            // TODO(Frando): We might want to include a local IP here in the future, if we confidently
-            // know that it is the correct one.
-            // See https://github.com/n0-computer/iroh/issues/4280.
-            smallvec![transports::FourTuple::from_remote(addr.remote())]
+            selected_path_targets(addr)
         } else {
             trace!(
                 paths = ?self.paths.addrs().collect::<Vec<_>>(),
@@ -1157,6 +1153,23 @@ fn send_datagram<'a>(
             .poll_send(cx, &addr, &transmit)
             .map(|res| res.with_context(|_| format!("failed to send datagram to {:?}", addr)))
     })
+}
+
+/// Returns the targets for a datagram sent on the selected path.
+///
+/// The selected path's local address is kept, so that a new connection leaves from the
+/// same source as the connection already using this path. A stateful firewall at the
+/// remote may drop packets from any other source.
+///
+/// The local address may have gone away since the path was selected, e.g. a rotated
+/// temporary IPv6 address, so the datagram is also sent without a local address.
+fn selected_path_targets(selected: &transports::FourTuple) -> SmallVec<[transports::FourTuple; 8]> {
+    let unpinned = transports::FourTuple::from_remote(selected.remote());
+    if *selected == unpinned {
+        smallvec![unpinned]
+    } else {
+        smallvec![selected.clone(), unpinned]
+    }
 }
 
 async fn send_datagram_to_targets(
@@ -1569,6 +1582,8 @@ async fn maybe_next<S: Stream + Unpin>(maybe_stream: Option<&mut S>) -> Option<O
 
 #[cfg(all(test, not(wasm_browser)))]
 mod tests {
+    use std::net::IpAddr;
+
     use super::*;
 
     #[tokio::test]
@@ -1615,5 +1630,152 @@ mod tests {
                 assert_eq!(&buf[..len], b"initial");
             }
         }
+    }
+
+    fn initial() -> OwnedTransmit {
+        OwnedTransmit {
+            ecn: None,
+            contents: bytes::Bytes::from_static(b"initial"),
+            segment_size: None,
+        }
+    }
+
+    /// Returns a sender whose socket has already sent, like the socket of a running endpoint.
+    ///
+    /// Until a socket has sent once, concurrent sends on it wake only one of the senders.
+    async fn used_sender(loopback: IpAddr) -> TransportsSender {
+        let config = match loopback {
+            IpAddr::V4(_) => transports::IpConfig::V4 {
+                ip_net: "0.0.0.0/0".parse().unwrap(),
+                port: 0,
+                is_required: true,
+                is_default: true,
+            },
+            IpAddr::V6(_) => transports::IpConfig::V6 {
+                ip_net: "::/0".parse().unwrap(),
+                scope_id: 0,
+                port: 0,
+                is_required: true,
+                is_default: true,
+            },
+        };
+        let (mut sender, _relay_receiver) =
+            TransportsSender::with_bounded_relay(1, [config].into_iter());
+        let sink = tokio::net::UdpSocket::bind((loopback, 0)).await.unwrap();
+        let sink =
+            transports::FourTuple::from_remote(transports::Addr::Ip(sink.local_addr().unwrap()));
+        send_datagram(&mut sender, sink, initial()).await.unwrap();
+        sender
+    }
+
+    async fn send_to_selected_path(selected: &transports::FourTuple) {
+        let loopback = selected
+            .remote()
+            .clone()
+            .into_socket_addr()
+            .expect("an IP path")
+            .ip();
+        let sends = send_datagram_to_targets(
+            Box::new(used_sender(loopback).await),
+            initial(),
+            selected_path_targets(selected),
+        );
+        time::timeout(Duration::from_secs(5), sends)
+            .await
+            .expect("sends to the selected path stalled");
+    }
+
+    /// Collects the sources of datagrams `receiver` gets until `done` holds for them, or
+    /// five seconds pass.
+    async fn sources_received_until(
+        receiver: &tokio::net::UdpSocket,
+        done: impl Fn(&[IpAddr]) -> bool,
+    ) -> Vec<IpAddr> {
+        let mut sources = Vec::new();
+        let mut buf = [0; 64];
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !done(&sources) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match time::timeout(left, receiver.recv_from(&mut buf)).await {
+                Ok(received) => sources.push(received.unwrap().1.ip()),
+                Err(_) => break,
+            }
+        }
+        sources
+    }
+
+    fn selected_path_from(
+        receiver: &tokio::net::UdpSocket,
+        local: IpAddr,
+    ) -> transports::FourTuple {
+        transports::FourTuple::Ip {
+            remote: receiver.local_addr().unwrap(),
+            local: Some(local),
+        }
+    }
+
+    /// 127.0.0.2 is local on Linux, but never the source the OS picks to reach 127.0.0.1.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn initial_on_selected_path_leaves_from_its_local_ip() {
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let local_ip: IpAddr = "127.0.0.2".parse().unwrap();
+
+        send_to_selected_path(&selected_path_from(&receiver, local_ip)).await;
+
+        let sources = sources_received_until(&receiver, |s| s.contains(&local_ip)).await;
+        assert!(
+            sources.contains(&local_ip),
+            "received only from {sources:?}"
+        );
+    }
+
+    /// The copy sent without a local IP is what arrives here, so this fails if only the
+    /// pinned copy is sent. Linux only: Apple platforms ignore an IPv4 source on send.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn initial_on_selected_path_arrives_when_its_local_ip_is_gone() {
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        // TEST-NET-1, assigned to no host.
+        let gone_ip: IpAddr = "192.0.2.1".parse().unwrap();
+
+        send_to_selected_path(&selected_path_from(&receiver, gone_ip)).await;
+
+        assert!(
+            !sources_received_until(&receiver, |s| !s.is_empty())
+                .await
+                .is_empty()
+        );
+    }
+
+    /// The case that motivates the fallback: a temporary IPv6 address rotated away. The copy
+    /// sent without a local IP is what arrives here, so this fails if only the pinned copy
+    /// is sent.
+    #[tokio::test]
+    async fn initial_on_selected_ipv6_path_arrives_when_its_local_ip_is_gone() {
+        let Ok(receiver) = tokio::net::UdpSocket::bind("[::1]:0").await else {
+            eprintln!("skipped: no IPv6 loopback");
+            return;
+        };
+        // The IPv6 documentation prefix, assigned to no host.
+        let gone_ip: IpAddr = "2001:db8::1".parse().unwrap();
+
+        send_to_selected_path(&selected_path_from(&receiver, gone_ip)).await;
+
+        assert!(
+            !sources_received_until(&receiver, |s| !s.is_empty())
+                .await
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn selected_path_without_local_address_is_sent_to_once() {
+        let relay = transports::FourTuple::Relay {
+            url: "https://relay.example.invalid".parse().unwrap(),
+            endpoint_id: iroh_base::SecretKey::from_bytes(&[1; 32]).public(),
+        };
+
+        assert_eq!(selected_path_targets(&relay).as_slice(), [relay]);
     }
 }
