@@ -18,3 +18,8 @@ rules:
       # actions/create-release is archived but pinned to a SHA; replacing it
       # means reworking the upload_url handoff to the asset upload step.
       - release.yml
+  unpinned-uses:
+    config:
+      policies:
+        # Allow pinning by tag to n0 actions and workflows.
+        n0-computer/*: ref-pin

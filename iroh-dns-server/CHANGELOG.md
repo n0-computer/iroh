@@ -2,6 +2,27 @@
 
 All notable changes to iroh-dns-server will be documented in this file.
 
+<!-- git-cliff: end of header -->
+## [1.4.1](https://github.com/n0-computer/iroh/compare/v1.4.0..1.4.1) - 2026-10-21
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix changelog ([#4628](https://github.com/n0-computer/iroh/issues/4628)) - ([efcb1c3](https://github.com/n0-computer/iroh/commit/efcb1c3f987127529458f2734a076acacf0254e3))
+
+
+
+## [1.4.0](https://github.com/n0-computer/iroh/compare/v1.3.0..1.4.0) - 2026-10-20
+
+### 🐛 Bug Fixes
+
+- *(dns-server)* Stop leaky idle connections ([#4620](https://github.com/n0-computer/iroh/issues/4620)) - ([be65184](https://github.com/n0-computer/iroh/commit/be6518477e399dd8aa995cddc393759f8c0a0c94))
+- *(iroh)* Reduce cache startup memory ([#4574](https://github.com/n0-computer/iroh/issues/4574)) - ([dce5173](https://github.com/n0-computer/iroh/commit/dce5173bc43c70441249a784012dbe7a1f5b3afe))
+- Increase listen backlog on dns server ([#4619](https://github.com/n0-computer/iroh/issues/4619)) - ([97941d6](https://github.com/n0-computer/iroh/commit/97941d63002d56e35a8e7a892ea5d11c72056651))
+
+### 🚜 Refactor
+
+- *(iroh-dns-server)* Update clap usage to modern v4 APIs ([#4567](https://github.com/n0-computer/iroh/issues/4567)) - ([12cd62b](https://github.com/n0-computer/iroh/commit/12cd62b5d1d689d4595b3770ca14bf58c44d3fc3))
+
 ## [1.3.0](https://github.com/n0-computer/iroh/compare/v1.2.0..1.3.0) - 2026-09-28
 
 ### ⛰️  Features

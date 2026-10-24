@@ -1,8 +1,12 @@
 [changelog]
 # changelog header
+# The no-op `if releases` block makes git-cliff treat the header as templated
+# (get_env alone is not detected as a template variable), so it emits and
+# maintains the `<!-- git-cliff: end of header -->` marker on `--prepend`.
 header = """
 # Changelog\n
-All notable changes to {{ get_env(name="CRATE_NAME", default="iroh") }} will be documented in this file.\n
+All notable changes to {{ get_env(name="CRATE_NAME", default="iroh") }} will be documented in this file.
+{% if releases %}{% endif %}\
 """
 
 body = """

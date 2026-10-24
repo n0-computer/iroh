@@ -25,13 +25,6 @@ permissions:
   contents: read
 
 jobs:
-  pick-runner:
-    uses: "$/.github/workflows/pick-runner.yml"
-    with:
-      min_free_runners: 3
-    secrets:
-      RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
-
   tests:
     name: CI Test Suite
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
@@ -39,15 +32,13 @@ jobs:
 
   min-crates:
     name: Min Crates
-    uses: "n0-computer/workflows/.github/workflows/minimal-crates.yaml@4e050c94c7d9679a2a0c4113a9cd6bfd3ec73194" # v1.1.1
+    uses: "n0-computer/workflows/.github/workflows/minimal-crates.yaml@v1"
 
   cross_build:
     name: Cross Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_1) }}
-    # runs-on: [self-hosted, linux, X64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       RUSTFLAGS: "-Dwarnings --cfg skip_patchbay"
     strategy:
@@ -263,9 +254,7 @@ jobs:
     name: Cross Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_3) }}
-    # runs-on: [self-hosted, linux, X64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -312,9 +301,7 @@ jobs:
 
   wasm_test:
     name: Build & test wasm32 for browsers
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_4) }}
-    # runs-on: [self-hosted, linux, X64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
@@ -368,9 +355,7 @@ jobs:
         run: cargo test --locked -p iroh --test integration --target=wasm32-unknown-unknown
 
   check_semver:
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_5) }}
-    # runs-on: [self-hosted, linux, X64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -393,9 +378,7 @@ jobs:
     timeout-minutes: 30
     name: Check external types in public API
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_9) }}
-    # runs-on: [self-hosted, linux, X64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -460,9 +443,7 @@ jobs:
   check_docs:
     timeout-minutes: 30
     name: Checking docs
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_6) }}
-    # runs-on: [self-hosted, linux, X64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -484,9 +465,7 @@ jobs:
 
   clippy_check:
     timeout-minutes: 30
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_7) }}
-    # runs-on: [self-hosted, linux, X64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
@@ -543,9 +522,7 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Minimal Supported Rust Version
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_8) }}
-    # runs-on: [self-hosted, linux, X64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"

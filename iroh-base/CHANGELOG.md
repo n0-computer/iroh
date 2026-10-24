@@ -2,6 +2,17 @@
 
 All notable changes to iroh-base will be documented in this file.
 
+<!-- git-cliff: end of header -->
+## [1.4.1](https://github.com/n0-computer/iroh/compare/v1.4.0..1.4.1) - 2026-10-21
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix changelog ([#4628](https://github.com/n0-computer/iroh/issues/4628)) - ([efcb1c3](https://github.com/n0-computer/iroh/commit/efcb1c3f987127529458f2734a076acacf0254e3))
+
+
+
+## [1.4.0](https://github.com/n0-computer/iroh/compare/v1.3.0..1.4.0) - 2026-10-20
+
 ## [1.3.0](https://github.com/n0-computer/iroh/compare/v1.2.0..1.3.0) - 2026-09-28
 
 ## [1.2.0](https://github.com/n0-computer/iroh/compare/v1.1.0..1.2.0) - 2026-09-09

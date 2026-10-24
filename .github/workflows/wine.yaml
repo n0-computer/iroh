@@ -21,18 +21,9 @@ permissions:
   contents: read
 
 jobs:
-  pick-runner:
-    uses: "$/.github/workflows/pick-runner.yml"
-    with:
-      min_free_runners: 3
-    secrets:
-      RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
-
   wine_test:
     name: Wine Sanity Check
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.overflow_1) }}
-    # runs-on: [self-hosted, linux, X64]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
