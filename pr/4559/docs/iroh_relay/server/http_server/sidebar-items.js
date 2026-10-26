@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["AcceptError","ConnectionHandlerError","ServeConnectionError"],"struct":["Handlers","RelayService","RelayServiceWithNotify","TlsConfig"],"type":["BytesBody","HyperError","HyperResult"]};
