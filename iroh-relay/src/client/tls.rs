@@ -131,7 +131,7 @@ impl MaybeTlsStreamBuilder {
         tls_connector: &tokio_rustls::TlsConnector,
     ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<tokio::net::TcpStream>>, DialError>
     {
-        debug!(%self.url, %proxy_url, "dial url via proxy");
+        debug!(%self.url, proxy_url = %with_password_masked(&proxy_url), "dial url via proxy");
 
         let tcp_stream = dial_happy_eyeballs(&self.dns_resolver, &proxy_url, self.prefer_ipv6)
             .await
@@ -186,7 +186,11 @@ impl MaybeTlsStreamBuilder {
             to_encode.push(b':');
             to_encode.extend(percent_decode_str(proxy_url.password().unwrap_or_default()));
             let encoded = BASE64.encode(&to_encode);
-            req_builder = req_builder.header("Proxy-Authorization", format!("Basic {encoded}"));
+            let mut value = http::HeaderValue::try_from(format!("Basic {encoded}"))
+                .expect("base64 is a valid header value");
+            // Keeps the credentials out of the request's `Debug` output.
+            value.set_sensitive(true);
+            req_builder = req_builder.header("Proxy-Authorization", value);
         }
         let req = req_builder
             .body(Empty::<Bytes>::new())
@@ -374,6 +378,16 @@ fn url_port(url: &Url) -> Option<u16> {
     }
 }
 
+/// Returns `url` with its password, if it has one, replaced by `***`, so it can be logged.
+fn with_password_masked(url: &Url) -> Url {
+    let mut url = url.clone();
+    if url.password().is_some() {
+        // Cannot fail: a URL that has a password can have one set.
+        url.set_password(Some("***")).ok();
+    }
+    url
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
@@ -520,5 +534,20 @@ mod tests {
             proxy_authorization_for("user:p%40ss").await,
             "Basic dXNlcjpwQHNz"
         );
+    }
+
+    /// Tests that the proxy password stays out of the debug log, in the proxy
+    /// URL and in the `Proxy-Authorization` header, while the username is kept.
+    #[cfg(with_crypto_provider)]
+    #[tokio::test]
+    #[n0_tracing_test::traced_test]
+    async fn proxy_credentials_are_not_logged() {
+        proxy_authorization_for("user:s3cret").await;
+        assert!(logs_contain("dial url via proxy"));
+        assert!(logs_contain("Sending proxy request"));
+        assert!(logs_contain("user:***@proxy.test"));
+        assert!(!logs_contain("s3cret"));
+        // "user:s3cret" in base64.
+        assert!(!logs_contain("dXNlcjpzM2NyZXQ="));
     }
 }
