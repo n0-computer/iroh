@@ -949,7 +949,8 @@ pub(crate) struct TransportsSender {
 }
 
 impl TransportsSender {
-    /// Not stored: noq-udp lowers an IP socket's limit after the kernel refuses a segmented send.
+    /// The IP sockets' limit is read on each call: noq-udp lowers it after the kernel refuses a
+    /// segmented send.
     fn max_transmit_segments(&self) -> NonZeroUsize {
         #[cfg(not(wasm_browser))]
         let ip = self.ip.max_transmit_segments();
@@ -1398,6 +1399,7 @@ mod tests {
             consecutive_total_recv_failures: 0,
         };
         let mut sender = transports.create_sender();
+        // Without GSO the limit is already 1, so there is nothing to go stale.
         if sender.max_transmit_segments() == NonZeroUsize::MIN {
             return;
         }
