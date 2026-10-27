@@ -1379,6 +1379,49 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn open_senders_stop_batching_after_a_refused_segmented_send() {
+        // GIVEN: an open sender on a loopback socket that supports GSO.
+        let loopback = IpConfig::V4 {
+            ip_net: "127.0.0.1/8".parse().unwrap(),
+            port: 0,
+            is_required: true,
+            is_default: true,
+        };
+        let transports = Transports {
+            ip: IpTransports::bind(std::iter::once(loopback), &EndpointMetrics::default()).unwrap(),
+            relay: Vec::new(),
+            custom: Vec::new(),
+            poll_recv_counter: 0,
+            recv_infos: Default::default(),
+            consecutive_total_recv_failures: 0,
+        };
+        let mut sender = transports.create_sender();
+        if sender.max_transmit_segments() == NonZeroUsize::MIN {
+            return;
+        }
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+        // WHEN: the kernel refuses a segmented send. More segments than `UDP_MAX_SEGMENTS` fail
+        // with EINVAL, which noq-udp handles like the EIO of a NIC without checksum offload.
+        let contents = [0u8; 1024];
+        let transmit = Transmit {
+            ecn: None,
+            contents: &contents,
+            segment_size: Some(1),
+        };
+        let path = FourTuple::Ip {
+            remote: receiver.local_addr().unwrap(),
+            local: None,
+        };
+        let _ =
+            std::future::poll_fn(|cx| Pin::new(&mut sender).poll_send(cx, &path, &transmit)).await;
+
+        // THEN: the sender stops batching.
+        assert_eq!(sender.max_transmit_segments(), NonZeroUsize::MIN);
+    }
+
     fn custom_only_transports(custom: Vec<Box<dyn CustomEndpoint>>) -> Transports {
         let metrics = EndpointMetrics::default();
         Transports {
