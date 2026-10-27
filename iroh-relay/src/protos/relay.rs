@@ -276,13 +276,14 @@ impl Datagrams {
         + self.contents.len()
     }
 
-    #[allow(clippy::len_zero, clippy::result_large_err)]
+    #[allow(clippy::result_large_err)]
     fn from_bytes(mut bytes: Bytes, is_batch: bool) -> Result<Self, Error> {
         if is_batch {
-            // 1 bytes ECN, 2 bytes segment size
-            ensure!(bytes.len() >= 3, Error::InvalidFrame);
+            // 1 byte ECN, 2 bytes segment size, at least 1 byte payload
+            ensure!(bytes.len() >= 4, Error::InvalidFrame);
         } else {
-            ensure!(bytes.len() >= 1, Error::InvalidFrame);
+            // 1 byte ECN, at least 1 byte payload
+            ensure!(bytes.len() >= 2, Error::InvalidFrame);
         }
 
         let ecn_byte = bytes.get_u8();
@@ -778,6 +779,61 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn regression_empty_datagram_rejected() {
+        let endpoint_id = SecretKey::from_bytes(&[42; 32]).public();
+        let cache = KeyCache::test();
+        for segment_size in [None, NonZeroU16::new(1)] {
+            let datagrams = Datagrams {
+                ecn: None,
+                segment_size,
+                contents: Bytes::new(),
+            };
+            let encoded = ClientToRelayMsg::Datagrams {
+                dst_endpoint_id: endpoint_id,
+                datagrams: datagrams.clone(),
+            }
+            .to_bytes()
+            .freeze();
+            let result = ClientToRelayMsg::from_bytes(encoded, &cache);
+            assert!(
+                matches!(result, Err(Error::InvalidFrame { .. })),
+                "expected InvalidFrame for {segment_size:?}, got {result:?}"
+            );
+
+            let encoded = RelayToClientMsg::Datagrams {
+                remote_endpoint_id: endpoint_id,
+                datagrams,
+            }
+            .to_bytes()
+            .freeze();
+            let result = RelayToClientMsg::from_bytes(encoded, &cache, ProtocolVersion::V2);
+            assert!(
+                matches!(result, Err(Error::InvalidFrame { .. })),
+                "expected InvalidFrame for {segment_size:?}, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn datagram_minimum_payload_accepted() {
+        for (encoded, segment_size) in [
+            (&[0, 42][..], None),
+            (&[0, 0, 1, 42][..], NonZeroU16::new(1)),
+        ] {
+            let decoded =
+                Datagrams::from_bytes(Bytes::from_static(encoded), segment_size.is_some()).unwrap();
+            assert_eq!(
+                decoded,
+                Datagrams {
+                    ecn: None,
+                    segment_size,
+                    contents: Bytes::from_static(&[42]),
+                }
+            );
+        }
+    }
 }
 
 #[cfg(all(test, feature = "server"))]
@@ -811,7 +867,7 @@ mod proptests {
         (
             ecn(),
             prop::option::of(MAX_PAYLOAD_SIZE / 20..MAX_PAYLOAD_SIZE),
-            vec(any::<u8>(), 0..MAX_PAYLOAD_SIZE),
+            vec(any::<u8>(), 1..MAX_PAYLOAD_SIZE),
         )
             .prop_map(|(ecn, segment_size, data)| Datagrams {
                 ecn,
