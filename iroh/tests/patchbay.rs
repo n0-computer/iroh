@@ -43,6 +43,10 @@ use crate::util::is_relayed;
 // without setting an explicit path.
 #[path = "patchbay/degrade.rs"]
 mod degrade;
+#[path = "patchbay/home-relay.rs"]
+mod home_relay;
+#[path = "patchbay/local-addrs.rs"]
+mod local_addrs;
 #[path = "patchbay/nat.rs"]
 mod nat;
 #[path = "patchbay/network-switch-no-wan.rs"]
