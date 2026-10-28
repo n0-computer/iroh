@@ -49,3 +49,71 @@ pub(super) fn collect(
         .map(|(addr, typ)| DirectAddr { addr, typ })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_source_precedence_and_hard_nat_candidate() {
+        let external: SocketAddrV4 = "198.51.100.1:45000".parse().unwrap();
+        let local: SocketAddr = "192.0.2.1:7777".parse().unwrap();
+        let configured: SocketAddr = "203.0.113.1:9999".parse().unwrap();
+        let public = PublicAddrs {
+            v4: Some(crate::net_report::PublicAddr {
+                addr: external,
+                varies_by_dest: true,
+            }),
+            v6: None,
+        };
+        let actual = collect(
+            Some(external),
+            public,
+            &["0.0.0.0:7777".parse().unwrap()],
+            [external.into(), local],
+            [external.into(), local, configured],
+        );
+        let expected = [
+            DirectAddr {
+                addr: external.into(),
+                typ: DirectAddrType::Portmapped,
+            },
+            DirectAddr {
+                addr: "198.51.100.1:7777".parse().unwrap(),
+                typ: DirectAddrType::Qad4LocalPort,
+            },
+            DirectAddr {
+                addr: local,
+                typ: DirectAddrType::Local,
+            },
+            DirectAddr {
+                addr: configured,
+                typ: DirectAddrType::Config,
+            },
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_ephemeral_bind_has_no_fixed_port_candidate() {
+        let external: SocketAddrV4 = "198.51.100.1:45000".parse().unwrap();
+        let public = PublicAddrs {
+            v4: Some(crate::net_report::PublicAddr {
+                addr: external,
+                varies_by_dest: true,
+            }),
+            v6: None,
+        };
+        assert_eq!(
+            collect(None, public, &["0.0.0.0:0".parse().unwrap()], [], []),
+            [DirectAddr {
+                addr: external.into(),
+                typ: DirectAddrType::Qad
+            }]
+            .into_iter()
+            .collect(),
+        );
+    }
+}

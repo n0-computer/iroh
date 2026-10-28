@@ -1532,6 +1532,25 @@ mod tests {
     };
     use crate::{dns::DnsResolver, metrics::SocketMetrics, test_utils};
 
+    impl crate::endpoint::RelayStatus {
+        /// Builds a dial timeout through the relay actor's normal error classification.
+        pub(crate) fn failed_dial_for_test(url: RelayUrl) -> Self {
+            let error = n0_error::e!(super::DialError::Timeout {
+                timeout: Duration::from_secs(10),
+            });
+            let failure = super::RelayConnectionFailure::new(n0_error::e!(
+                super::RelayConnectionError::Dial,
+                error
+            ));
+            Self::new(
+                url,
+                super::RelayConnectionState::Disconnected {
+                    last_failure: Some(Arc::new(failure)),
+                },
+            )
+        }
+    }
+
     /// Abort stands in for the runtime drop that triggers this in the wild:
     /// `join_next` yields a cancelled `JoinError` either way.
     #[tokio::test]

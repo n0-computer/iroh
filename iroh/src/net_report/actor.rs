@@ -86,7 +86,7 @@ const MAX_QAD_RELAYS: usize = 5;
 /// The minimum age of a kept QAD connection whose close starts a refresh.
 ///
 /// A younger connection that closes leaves its family to the next cycle.
-const MIN_QAD_CONN_AGE: Duration = Duration::from_secs(5);
+pub(super) const MIN_QAD_CONN_AGE: Duration = Duration::from_secs(5);
 
 /// The share of the refresh interval added at random to each refresh.
 const REFRESH_JITTER: f64 = 0.3;
@@ -1274,7 +1274,7 @@ mod tests {
     use n0_error::Result;
 
     use super::*;
-    use crate::net_report::report::Probe;
+    use crate::net_report::{report::Probe, timing::Timing};
 
     /// Returns a made-up relay URL with number `i`.
     fn relay_url(i: u16) -> RelayUrl {
@@ -1284,6 +1284,17 @@ mod tests {
     /// Returns a relay map with the made-up relays 1 to 3.
     fn relay_map() -> RelayMap {
         RelayMap::from_iter((1..=3).map(|i| RelayConfig::from(relay_url(i))))
+    }
+
+    /// Builds QAD IPv4 latencies from `("d<relay number>", seconds)` pairs.
+    fn latencies(a: impl IntoIterator<Item = (&'static str, u64)>) -> RelayLatencies {
+        let mut latencies = RelayLatencies::default();
+        for (s, d) in a {
+            assert!(s.starts_with('d'), "invalid relay server key");
+            let id: u16 = s[1..].parse().unwrap();
+            latencies.update_relay(relay_url(id), Duration::from_secs(d), Probe::QadIpv4);
+        }
+        latencies
     }
 
     /// Checks the home relay selection across a sequence of cycles.
@@ -1386,5 +1397,464 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    /// Checks how the status of the current home relay affects the choice.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_current_home_status() {
+        let mut history = History::default();
+        let now = Instant::now();
+        history.record(&latencies([("d1", 30), ("d2", 28)]), now);
+        let d1 = relay_url(1);
+        let relays = relay_map();
+        let select = |latencies: RelayLatencies, status| {
+            history.select_home_relay(
+                &latencies,
+                Some((&d1, status)),
+                Candidates::Recent,
+                &relays,
+                now,
+            )
+        };
+
+        // Measured: hysteresis keeps d1, since 28s is not 33% faster than 30s.
+        assert_eq!(
+            select(latencies([("d1", 30), ("d2", 28)]), CurrentHome::Measured),
+            Some(relay_url(1))
+        );
+        // Unprobed: the recent latency of d1 stands in.
+        assert_eq!(
+            select(latencies([("d2", 28)]), CurrentHome::Unknown),
+            Some(relay_url(1))
+        );
+        // Unprobed, but a much faster relay still wins.
+        assert_eq!(
+            select(latencies([("d2", 10)]), CurrentHome::Unknown),
+            Some(relay_url(2))
+        );
+        // Unreachable: switch to the best relay we have.
+        assert_eq!(
+            select(latencies([("d2", 28)]), CurrentHome::Unreachable),
+            Some(relay_url(2))
+        );
+        // Unreachable, and the cycle measured no other relay: the relays of
+        // the last five minutes are the candidates.
+        assert_eq!(
+            select(latencies([("d1", 30)]), CurrentHome::Unreachable),
+            Some(relay_url(2))
+        );
+        // A cycle decision only looks at what the cycle measured. With
+        // nothing else measured, for example offline, it keeps d1.
+        assert_eq!(
+            history.select_home_relay(
+                &latencies([("d1", 30)]),
+                Some((&d1, CurrentHome::Unreachable)),
+                Candidates::Measured,
+                &relays,
+                now
+            ),
+            None
+        );
+        // A relay that left the relay map is no candidate.
+        let relays = RelayMap::from_iter([RelayConfig::from(relay_url(1))]);
+        assert_eq!(
+            history.select_home_relay(
+                &latencies([("d1", 30)]),
+                Some((&d1, CurrentHome::Unreachable)),
+                Candidates::Recent,
+                &relays,
+                now
+            ),
+            None
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scope_for() {
+        let interval = Timing::default().full_cycle_interval;
+        let mut history = History::default();
+        let now = Instant::now();
+        let scope = |h: &History, trigger, at, captive| h.scope_for(trigger, at, interval, captive);
+        assert_eq!(
+            scope(&history, ProbeScope::Refresh, now, false),
+            ProbeScope::Full,
+            "first cycle is full"
+        );
+
+        history.last_full = Some(now);
+        assert_eq!(
+            scope(&history, ProbeScope::Refresh, now, false),
+            ProbeScope::Refresh
+        );
+        assert_eq!(
+            scope(&history, ProbeScope::Full, now, false),
+            ProbeScope::Full
+        );
+        assert_eq!(
+            scope(
+                &history,
+                ProbeScope::Refresh,
+                now + interval + Duration::from_secs(1),
+                false
+            ),
+            ProbeScope::Full,
+            "full after the interval"
+        );
+        assert_eq!(
+            scope(&history, ProbeScope::Refresh, now, true),
+            ProbeScope::Full,
+            "full behind a captive portal without UDP"
+        );
+    }
+
+    #[test]
+    fn test_jittered() {
+        let interval = Duration::from_secs(20);
+        for _ in 0..100 {
+            let d = jittered(interval);
+            assert!(d >= interval && d <= Duration::from_secs(26), "{d:?}");
+        }
+    }
+
+    #[cfg(not(wasm_browser))]
+    #[test]
+    fn test_progress_answer() {
+        let a: SocketAddr = "1.1.1.1:1000".parse().unwrap();
+        let b: SocketAddr = "2.2.2.2:2000".parse().unwrap();
+
+        assert_eq!(Progress::Waiting.answer(a), Progress::One(a));
+        assert_eq!(
+            Progress::One(a).answer(a),
+            Progress::Decided {
+                addr: a,
+                varies: false
+            }
+        );
+        assert_eq!(
+            Progress::One(a).answer(b),
+            Progress::Decided {
+                addr: a,
+                varies: true
+            }
+        );
+        // Once an answer differed, later matching answers do not undo it.
+        assert_eq!(
+            Progress::One(a).answer(b).answer(a),
+            Progress::Decided {
+                addr: a,
+                varies: true
+            }
+        );
+        // An observation replaces the address but keeps the verdict.
+        assert_eq!(Progress::One(a).observe(b), Progress::One(b));
+        assert_eq!(Progress::Waiting.observe(b), Progress::Waiting);
+    }
+
+    #[test]
+    fn test_progress_view_and_settle() {
+        let a: SocketAddr = "1.1.1.1:1000".parse().unwrap();
+        let b: SocketAddr = "2.2.2.2:2000".parse().unwrap();
+        let known = Some(Known {
+            addr: a,
+            varies: Some(true),
+        });
+        let k = |addr, varies| Some(Known { addr, varies });
+
+        // (progress, what is published while the cycle runs, what remains after)
+        let cases = [
+            (Progress::Kept, known, known),
+            (Progress::Waiting, known, None),
+            // The same address keeps its verdict, a new one starts undecided.
+            (Progress::One(a), known, known),
+            (Progress::One(b), k(b, None), k(b, None)),
+            (
+                Progress::Decided {
+                    addr: b,
+                    varies: false,
+                },
+                k(b, Some(false)),
+                k(b, Some(false)),
+            ),
+        ];
+        for (progress, view, settled) in cases {
+            assert_eq!(progress.view(known), view, "view of {progress:?}");
+            assert_eq!(progress.settle(known), settled, "settle of {progress:?}");
+        }
+        assert_eq!(Progress::Waiting.view(None), None);
+        assert_eq!(Progress::One(a).view(None), k(a, None));
+    }
+    /// An actor driven directly by tests, with three relays and a known home.
+    fn test_actor() -> (NetReportActor, n0_watcher::Watchable<Option<RelayStatus>>) {
+        let status = n0_watcher::Watchable::new(None);
+        let interfaces = n0_watcher::Watchable::new(netwatch::netmon::State::fake());
+        let (_sender, receiver) = mpsc::unbounded_channel();
+        let opts = Options {
+            config: crate::net_report::NetReportConfig::minimal(),
+            timing: Timing::default(),
+            relay_map: relay_map(),
+            relay_status: status.watch(),
+            quic_client: None,
+            qad_ipv6: false,
+            dns_resolver: crate::dns::DnsResolver::new(),
+            tls_config: iroh_relay::tls::make_dangerous_client_config(),
+            proxy_url: None,
+        };
+        let outputs = Outputs::default();
+        outputs.home_relay.set(Some(relay_url(1))).unwrap();
+        let mut actor = NetReportActor::new(
+            opts,
+            Interfaces::from_watcher(interfaces.watch()),
+            receiver,
+            outputs,
+            Arc::new(Metrics::default()),
+            CancellationToken::new(),
+        );
+        actor.pending = None;
+        actor.history.record(
+            &latencies([("d1", 10), ("d2", 11), ("d3", 12)]),
+            Instant::now(),
+        );
+        (actor, status)
+    }
+
+    fn test_cycle() -> ProbeCycle {
+        ProbeCycle {
+            probes: FuturesUnordered::new(),
+            decide_at: Some(Instant::now()),
+            deadline: Instant::now(),
+            probed: BTreeSet::from([relay_url(1), relay_url(2), relay_url(3)]),
+            answered: BTreeSet::new(),
+            failed: BTreeSet::new(),
+            https_cancel: BTreeMap::new(),
+            progress: PerFamily::default(),
+            qad_cancel: PerFamily::default(),
+            captive_portal_cancel: CancellationToken::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_home_relay_requires_failure_evidence() {
+        for connected in [false, true] {
+            for failed in [false, true] {
+                let (mut actor, status) = test_actor();
+                if connected {
+                    status
+                        .set(Some(RelayStatus::new(
+                            relay_url(1),
+                            crate::socket::transports::RelayConnectionState::Connected,
+                        )))
+                        .unwrap();
+                    actor.opts.relay_status.get();
+                }
+                actor.latencies = latencies([("d2", 11), ("d3", 12)]);
+                let mut cycle = test_cycle();
+                cycle.answered.extend([relay_url(2), relay_url(3)]);
+                if failed {
+                    cycle.failed.insert(relay_url(1));
+                }
+                // The first-report deadline does not turn a pending probe into a failure.
+                cycle.probes.push(Box::pin(std::future::pending()));
+                actor.cycle = Some(cycle);
+                actor.decide_home_relay_early(true);
+                assert_eq!(
+                    actor.outputs.home_relay.get(),
+                    Some(relay_url(1)),
+                    "pending probe, connected={connected}, failed={failed}"
+                );
+                // Finishing with a cancelled home probe must preserve hysteresis.
+                // An actually failed probe can evict it only if the transport is not connected.
+                actor.finish_cycle(Instant::now());
+                let expected = if failed && !connected { 2 } else { 1 };
+                assert_eq!(
+                    actor.outputs.home_relay.get(),
+                    Some(relay_url(expected)),
+                    "finished cycle, connected={connected}, failed={failed}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_probe_cancellation_is_not_failure() {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let result = guarded(
+            cancel,
+            Duration::ZERO,
+            Duration::from_secs(1),
+            std::future::pending::<Result<HttpsProbeReport, &'static str>>(),
+        )
+        .await;
+        assert!(matches!(result, ProbeResult::Inconclusive));
+
+        let (mut actor, _) = test_actor();
+        actor.latencies = latencies([("d2", 11), ("d3", 12)]);
+        actor.cycle = Some(test_cycle());
+        actor.on_probe_output(ProbeOutput::Https(relay_url(1), result));
+        assert_eq!(actor.outputs.home_relay.get(), Some(relay_url(1)));
+
+        let result = guarded(
+            CancellationToken::new(),
+            Duration::ZERO,
+            Duration::from_secs(1),
+            async { Err::<HttpsProbeReport, _>("unreachable") },
+        )
+        .await;
+        actor.cycle = Some(test_cycle());
+        actor.on_probe_output(ProbeOutput::Https(relay_url(1), result));
+        assert_eq!(actor.outputs.home_relay.get(), Some(relay_url(2)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_probe_timeout_and_panic_evidence() {
+        let result = guarded(
+            CancellationToken::new(),
+            Duration::ZERO,
+            Duration::from_secs(1),
+            std::future::pending::<Result<(), &'static str>>(),
+        )
+        .await;
+        assert!(matches!(result, ProbeResult::Failed));
+        let result = guarded(
+            CancellationToken::new(),
+            Duration::ZERO,
+            Duration::from_secs(1),
+            async {
+                panic!("broken probe");
+                #[allow(unreachable_code)]
+                Ok::<(), &'static str>(())
+            },
+        )
+        .await;
+        assert!(matches!(result, ProbeResult::Inconclusive));
+    }
+
+    #[tokio::test]
+    async fn test_cached_latency_does_not_rearm_offline_failover() {
+        let (mut actor, _) = test_actor();
+        actor.failed_over = true;
+        actor.latencies = latencies([("d1", 10)]);
+        let mut cycle = test_cycle();
+        cycle.progress[AddrFamily::V4] = Progress::Kept;
+        actor.cycle = Some(cycle);
+        actor.finish_cycle(Instant::now());
+        assert!(actor.failed_over);
+        // A genuine success recovers immediately, even while other probes still run.
+        let mut cycle = test_cycle();
+        cycle.probes.push(Box::pin(std::future::pending()));
+        actor.cycle = Some(cycle);
+        actor.on_probe_output(ProbeOutput::Https(
+            relay_url(2),
+            ProbeResult::Success(HttpsProbeReport {
+                relay_url: relay_url(2),
+                latency: Duration::from_secs(11),
+            }),
+        ));
+        assert!(!actor.failed_over);
+        actor.failed_over = true;
+        actor.on_qad_observation(
+            AddrFamily::V4,
+            &QadProbeReport {
+                relay_url: relay_url(2),
+                latency: Duration::from_secs(11),
+                addr: "192.0.2.1:1234".parse().unwrap(),
+            },
+        );
+        assert!(!actor.failed_over);
+    }
+
+    #[tokio::test]
+    async fn test_failover_publishes_report_and_stops_until_recovery() {
+        let (mut actor, status) = test_actor();
+        actor.latencies = latencies([("d1", 10), ("d2", 11), ("d3", 12)]);
+        actor.publish();
+        let fail = |actor: &mut NetReportActor, relay| {
+            let failure = RelayStatus::failed_dial_for_test(relay_url(relay));
+            status.set(Some(failure.clone())).unwrap();
+            actor.opts.relay_status.get();
+            actor.on_relay_status(Some(failure));
+        };
+        fail(&mut actor, 1);
+        assert_eq!(actor.outputs.home_relay.get(), Some(relay_url(2)));
+        assert!(actor.failed_over);
+        assert_eq!(
+            actor.outputs.report.get().unwrap().preferred_relay,
+            Some(relay_url(2))
+        );
+        fail(&mut actor, 2);
+        assert_eq!(actor.outputs.home_relay.get(), Some(relay_url(2)));
+        // A refresh retaining the failed old relay's QAD reading cannot undo the guard.
+        actor.latencies = latencies([("d1", 10)]);
+        let mut cycle = test_cycle();
+        cycle.failed.insert(relay_url(2));
+        cycle.progress[AddrFamily::V4] = Progress::Kept;
+        actor.cycle = Some(cycle);
+        actor.finish_cycle(Instant::now());
+        assert_eq!(actor.outputs.home_relay.get(), Some(relay_url(2)));
+        assert!(actor.failed_over);
+
+        let connected = RelayStatus::new(
+            relay_url(2),
+            crate::socket::transports::RelayConnectionState::Connected,
+        );
+        status.set(Some(connected.clone())).unwrap();
+        actor.opts.relay_status.get();
+        actor.on_relay_status(Some(connected));
+        assert!(!actor.failed_over);
+        fail(&mut actor, 2);
+        assert_eq!(actor.outputs.home_relay.get(), Some(relay_url(1)));
+        assert_eq!(
+            actor.outputs.report.get().unwrap().preferred_relay,
+            Some(relay_url(1))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unsuccessful_failover_does_not_latch() {
+        let (mut actor, status) = test_actor();
+        actor.history = History::default();
+        let failure = RelayStatus::failed_dial_for_test(relay_url(1));
+        status.set(Some(failure.clone())).unwrap();
+        actor.opts.relay_status.get();
+        actor.on_relay_status(Some(failure));
+        assert!(!actor.failed_over);
+    }
+
+    #[tokio::test]
+    async fn test_portal_result_initializes_report() {
+        for found in [false, true] {
+            let (mut actor, _) = test_actor();
+            actor.cycle = Some(test_cycle());
+            actor.on_probe_output(ProbeOutput::CaptivePortal(ProbeResult::Success(found)));
+            assert_eq!(
+                actor.outputs.report.get().unwrap().captive_portal,
+                Some(found)
+            );
+        }
+    }
+    #[tokio::test]
+    async fn test_offline_guard_allows_replacing_removed_home() {
+        let (mut actor, _) = test_actor();
+        actor.failed_over = true;
+        actor.opts.relay_map = RelayMap::from(RelayConfig::from(relay_url(2)));
+        assert!(actor.decide_home_relay(None, Candidates::Recent));
+        assert_eq!(actor.outputs.home_relay.get(), Some(relay_url(2)));
+    }
+    #[tokio::test]
+    async fn test_failed_cycles_do_not_rotate_cached_relays() {
+        let (mut actor, _) = test_actor();
+        actor.latencies = latencies([("d2", 11), ("d3", 12)]);
+        let mut cycle = test_cycle();
+        cycle.failed.insert(relay_url(1));
+        actor.cycle = Some(cycle);
+        actor.finish_cycle(Instant::now());
+        assert_eq!(actor.outputs.home_relay.get(), Some(relay_url(2)));
+        assert!(actor.failed_over);
+
+        let mut cycle = test_cycle();
+        cycle.failed.insert(relay_url(2));
+        actor.cycle = Some(cycle);
+        actor.finish_cycle(Instant::now());
+        assert_eq!(actor.outputs.home_relay.get(), Some(relay_url(2)));
     }
 }

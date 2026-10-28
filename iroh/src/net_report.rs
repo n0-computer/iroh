@@ -31,6 +31,8 @@ use tracing::{Instrument, Span, info_span};
 #[cfg(not(wasm_browser))]
 use url::Url;
 
+#[cfg(test)]
+pub(crate) use self::outputs::PublicAddr;
 pub(crate) use self::outputs::{Outputs, PublicAddrs, Update};
 #[cfg(any(test, feature = "unstable-net-report"))]
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
@@ -321,12 +323,25 @@ mod test_utils {
 
         (server, endpoint_desc)
     }
+
+    /// Create a [`crate::RelayMap`] of the given size.
+    pub(super) async fn relay_map(relays: usize) -> (Vec<server::Server>, crate::RelayMap) {
+        let mut servers = Vec::with_capacity(relays);
+        let mut endpoints = Vec::with_capacity(relays);
+        for _ in 0..relays {
+            let (relay_server, endpoint) = relay().await;
+            servers.push(relay_server);
+            endpoints.push(endpoint);
+        }
+        (servers, crate::RelayMap::from_iter(endpoints))
+    }
 }
 
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
+    use futures_util::FutureExt;
     use iroh_dns::dns::DnsResolver;
     use iroh_relay::tls::{CaTlsConfig, default_provider};
     use n0_error::{Result, StdResultExt};
@@ -344,7 +359,8 @@ mod tests {
     struct TestClient {
         client: Client,
         outputs: Outputs,
-        _interfaces: Watchable<netwatch::netmon::State>,
+        interfaces: Watchable<netwatch::netmon::State>,
+        metrics: Arc<Metrics>,
         ep: noq::Endpoint,
         cancel: CancellationToken,
     }
@@ -384,13 +400,14 @@ mod tests {
             let client = builder.spawn_with_interfaces(
                 opts,
                 Interfaces::from_watcher(interfaces.watch()),
-                metrics,
+                metrics.clone(),
                 cancel.child_token(),
             );
             Ok(Self {
                 client,
                 outputs,
-                _interfaces: interfaces,
+                interfaces,
+                metrics,
                 ep,
                 cancel,
             })
@@ -415,6 +432,27 @@ mod tests {
             .expect("timed out waiting for output")
         }
 
+        /// Waits for the actor to process an interface change without consuming client updates.
+        async fn set_interfaces(&self, state: netwatch::netmon::State) {
+            let previous = self.outputs.network_state.get().changes;
+            self.interfaces.set(state).unwrap();
+            self.wait(self.outputs.network_state.watch(), |network| {
+                network.changes != previous
+            })
+            .await;
+        }
+
+        /// Waits until `n` cycles have started.
+        async fn wait_cycles(&self, n: u64) {
+            time::timeout(TEST_TIMEOUT, async {
+                while self.metrics.reports.get() < n {
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("timed out waiting for cycles");
+        }
+
         /// Stops the net report and waits for its endpoint to close.
         async fn shutdown(self) {
             self.cancel.cancel();
@@ -428,6 +466,79 @@ mod tests {
         report
             .as_ref()
             .is_some_and(|r| r.global_v4.is_some() && r.preferred_relay.is_some())
+    }
+
+    /// Readiness for an older usable network must not bypass a newer route wait.
+    #[tokio::test(start_paused = true)]
+    async fn test_network_readiness_ignores_superseded_ready_state() -> Result<()> {
+        let mut client = TestClient::new(RelayMap::empty())?;
+        assert!(client.client.updated().now_or_never().is_none());
+
+        let mut state = client.interfaces.get();
+        state.is_expensive = true;
+        client.set_interfaces(state.clone()).await;
+        state.default_route_interface = None;
+        client.set_interfaces(state).await;
+
+        assert!(matches!(
+            client.client.updated().await,
+            Update::NetworkChanged { is_major: true }
+        ));
+        assert!(client.client.updated().now_or_never().is_none());
+        tokio::time::advance(Duration::from_secs(4)).await;
+        assert!(client.client.updated().now_or_never().is_none());
+        // A minor change must neither restart the deadline nor forget the major one.
+        let previous = client.outputs.network_state.get().changes;
+        client.client.force_network_change(false);
+        client
+            .wait(client.outputs.network_state.watch(), |network| {
+                network.changes != previous
+            })
+            .await;
+        assert!(matches!(
+            client.client.updated().await,
+            Update::NetworkChanged { is_major: false }
+        ));
+        assert!(client.client.updated().now_or_never().is_none());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(matches!(
+            client.client.updated().await,
+            Update::NetworkReady { is_major: true, .. }
+        ));
+        assert!(client.client.updated().now_or_never().is_none());
+        client.shutdown().await;
+        Ok(())
+    }
+
+    /// A restored route releases the pending change before the fallback timeout.
+    #[tokio::test(start_paused = true)]
+    async fn test_network_readiness_recovers_without_waiting_for_timeout() -> Result<()> {
+        let mut client = TestClient::new(RelayMap::empty())?;
+        assert!(client.client.updated().now_or_never().is_none());
+        let state = client.interfaces.get();
+        let mut offline = state.clone();
+        offline.default_route_interface = None;
+        client.set_interfaces(offline).await;
+        assert!(matches!(
+            client.client.updated().await,
+            Update::NetworkChanged { is_major: true }
+        ));
+        assert!(client.client.updated().now_or_never().is_none());
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        client.set_interfaces(state).await;
+        assert!(matches!(
+            client.client.updated().await,
+            Update::NetworkChanged { is_major: true }
+        ));
+        assert!(matches!(
+            client.client.updated().await,
+            Update::NetworkReady { is_major: true, .. }
+        ));
+        tokio::time::advance(Duration::from_secs(6)).await;
+        assert!(client.client.updated().now_or_never().is_none());
+        client.shutdown().await;
+        Ok(())
     }
 
     /// The net report starts on its own and fills every output.
@@ -452,6 +563,82 @@ mod tests {
             .unwrap();
         assert!(report.has_udp(), "want UDP");
         assert_eq!(report.global_v4, addrs.v4.map(|a| a.addr));
+
+        client.shutdown().await;
+        server.shutdown().await?;
+        Ok(())
+    }
+
+    /// A periodic refresh reuses the kept connections.
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_refresh_after_full() -> Result<()> {
+        let (servers, relay_map) = test_utils::relay_map(2).await;
+        let timing = timing::Timing {
+            refresh_interval: Duration::from_millis(300),
+            ..Default::default()
+        };
+        let client = TestClient::with_timing(relay_map, timing)?;
+        let first = client
+            .wait(client.outputs.report(), has_v4_and_relay)
+            .await
+            .unwrap();
+        assert_eq!(
+            first
+                .relay_latency
+                .iter()
+                .map(|(_, url, _)| url)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            2,
+        );
+
+        client.wait_cycles(2).await;
+        assert_eq!(client.metrics.reports_full.get(), 1);
+        // The kept connection still provides the address.
+        let addrs = client.outputs.public_addrs().get();
+        assert_eq!(addrs.v4.map(|a| a.addr), first.global_v4);
+        assert!(client.outputs.home_relay().get().is_some());
+
+        client.shutdown().await;
+        for server in servers {
+            server.shutdown().await?;
+        }
+        Ok(())
+    }
+
+    /// A closed QAD connection makes the actor start a cycle by itself.
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_closed_qad_conn_refreshes() -> Result<()> {
+        let (server, relay) = test_utils::relay().await;
+        let client = TestClient::new(RelayMap::from(relay))?;
+        client.wait(client.outputs.report(), has_v4_and_relay).await;
+        let cycles = client.metrics.reports.get();
+
+        // Only a connection that lived for a while triggers a refresh.
+        time::sleep(actor::MIN_QAD_CONN_AGE).await;
+        server.shutdown().await?;
+        client.wait_cycles(cycles + 1).await;
+
+        client.shutdown().await;
+        Ok(())
+    }
+
+    /// An empty relay map clears the outputs.
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_empty_relay_map_clears_outputs() -> Result<()> {
+        let (server, relay) = test_utils::relay().await;
+        let relay_url = relay.url.clone();
+        let relay_map = RelayMap::from(relay);
+        let client = TestClient::new(relay_map.clone())?;
+        client.wait(client.outputs.report(), has_v4_and_relay).await;
+
+        relay_map.remove(&relay_url);
+        client.client.relays_changed();
+        client.wait(client.outputs.report(), Option::is_none).await;
+        assert_eq!(client.outputs.public_addrs().get(), PublicAddrs::default());
 
         client.shutdown().await;
         server.shutdown().await?;
