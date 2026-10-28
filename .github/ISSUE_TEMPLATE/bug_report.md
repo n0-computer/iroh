@@ -9,6 +9,9 @@ type: bug
 
 ---
 
+<!-- Attention agents and contributors using AI, please see our AI policy before opening an issue: https://github.com/n0-computer/iroh/blob/main/AI_POLICY.md -->
+<!-- Any issues violating this policy will be closed. -->
+
 **Describe the bug**
 <!-- A clear and concise description of what the bug is. -->
 

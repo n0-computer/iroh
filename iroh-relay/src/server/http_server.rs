@@ -26,6 +26,7 @@ use n0_future::MaybeFuture;
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{Notify, watch},
+    time::Instant,
 };
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -630,7 +631,8 @@ impl RelayServiceWithNotify {
         // waiting for it to complete to then return a response.
         tokio::task::spawn({
             let this = self.clone();
-            async move {
+            let deadline = Instant::now() + this.establish_timeout;
+            let establish = async move {
                 match hyper::upgrade::on(&mut req).await {
                     Ok(upgraded) => {
                         let (parts, _) = req.into_parts();
@@ -650,6 +652,13 @@ impl RelayServiceWithNotify {
                         };
                     }
                     Err(err) => warn!("upgrade error: {err:#}"),
+                }
+            };
+            async move {
+                // After the WebSocket upgrade, the HTTP timeout no longer covers this socket.
+                // Give the client a deadline to finish authentication and the access check.
+                if tokio::time::timeout_at(deadline, establish).await.is_err() {
+                    debug!("relay connection establishment timed out");
                 }
             }
             .instrument(info_span!("handler"))
@@ -684,7 +693,7 @@ impl RelayServiceWithNotify {
 /// ## Example
 ///
 /// ```no_run
-/// # use std::sync::Arc;
+/// # use std::{sync::Arc, time::Duration};
 /// # use http::HeaderMap;
 /// # use hyper::server::conn::http1;
 /// # use hyper_util::rt::TokioIo;
@@ -706,7 +715,11 @@ impl RelayServiceWithNotify {
 ///     Arc::new(AllowAll),
 ///     Arc::new(Metrics::default()),
 /// );
-/// let service = RelayServiceWithNotify::new(service, Arc::new(Notify::new()));
+/// let service = RelayServiceWithNotify::with_timeout(
+///     service,
+///     Arc::new(Notify::new()),
+///     Duration::from_secs(30),
+/// );
 ///
 /// let listener = TcpListener::bind("127.0.0.1:0").await?;
 /// let (stream, _peer) = listener.accept().await?;
@@ -724,6 +737,7 @@ impl RelayServiceWithNotify {
 pub struct RelayServiceWithNotify {
     service: RelayService,
     on_establish: Arc<Notify>,
+    establish_timeout: Duration,
 }
 
 impl RelayServiceWithNotify {
@@ -731,10 +745,29 @@ impl RelayServiceWithNotify {
     ///
     /// The `on_establish` notification is triggered once the connection is passed to the
     /// relay protocol, i.e. after a WebSocket request on /relay is received and established.
+    /// Upgraded connections must finish authentication and authorization within 30 seconds
+    /// of receiving the upgrade request.
     pub fn new(service: RelayService, on_establish: Arc<Notify>) -> Self {
+        Self::with_timeout(service, on_establish, ESTABLISH_TIMEOUT)
+    }
+
+    /// Creates a service wrapper with a relay establishment timeout.
+    ///
+    /// Each upgrade request starts a new timeout covering the WebSocket upgrade, authentication,
+    /// and authorization. The `on_establish` notification is triggered once the connection is
+    /// passed to the relay protocol. Established connections are not subject to this timeout.
+    ///
+    /// The caller must separately bound TLS handshakes and HTTP requests before an upgrade request
+    /// reaches this service.
+    pub fn with_timeout(
+        service: RelayService,
+        on_establish: Arc<Notify>,
+        timeout: Duration,
+    ) -> Self {
         Self {
             service,
             on_establish,
+            establish_timeout: timeout,
         }
     }
 }
@@ -958,8 +991,9 @@ impl RelayService {
     ///
     /// If a `tls_config` is given, will serve the connection using HTTPS, otherwise HTTP.
     ///
-    /// If the connection did not fully upgrade to a relay WebSocket connection after
-    /// `establish_timeout`, the connection is aborted.
+    /// TLS and HTTP establishment are bounded by `establish_timeout`. An upgrade request starts
+    /// a separate timeout of the same duration for the WebSocket upgrade, authentication, and
+    /// authorization. The connection is aborted if either timeout expires.
     ///
     /// # Example
     ///
@@ -1023,7 +1057,8 @@ impl RelayService {
         // We create a notification token to be triggered once the connection is fully established
         // and passed to the relay server.
         let on_establish = Arc::new(Notify::new());
-        let service = RelayServiceWithNotify::new(self, on_establish.clone());
+        let service =
+            RelayServiceWithNotify::with_timeout(self, on_establish.clone(), establish_timeout);
 
         // This is the main connection future, driving the connection to completion.
         let serve_fut = async move {
@@ -1040,10 +1075,8 @@ impl RelayService {
             }
         };
 
-        // We set a timeout for the connection to limit lingering connections during establishment.
-        // The timeout is cleared once the connection has completed the TLS and WebSocket
-        // handshakes and has been passed over to the relay protocol handler.
-        // If the timeout expires before that happens, the connection is aborted.
+        // Bound TLS and HTTP establishment. Hyper completes this future when it hands off an
+        // upgraded socket; the upgrade task separately bounds authentication and authorization.
         let res = clearable_timeout(establish_timeout, on_establish, serve_fut)
             .await
             .map_err(|_elapsed| e!(ServeConnectionError::EstablishTimeout))

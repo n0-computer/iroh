@@ -217,7 +217,8 @@ struct ZoneCache {
 
 impl ZoneCache {
     fn new(cap: usize, metrics: Arc<Metrics>) -> Self {
-        let cache = LruCache::new(NonZeroUsize::new(cap).expect("capacity must be larger than 0"));
+        let cache =
+            LruCache::sparse(NonZeroUsize::new(cap).expect("capacity must be larger than 0"));
         let dht_cache = TtlCache::new(cap);
         Self {
             cache,

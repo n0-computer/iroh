@@ -375,6 +375,8 @@ pub(crate) struct Socket {
     configured_addrs: RwLock<BTreeSet<SocketAddr>>,
 
     pub(crate) tls_config: rustls::ClientConfig,
+    /// The proxy for HTTP(S) traffic, if any.
+    pub(crate) proxy_url: Option<Url>,
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
@@ -889,7 +891,8 @@ impl EndpointInner {
             configured_addrs,
         } = opts;
 
-        let address_lookup = address_lookup::AddressLookupServices::default();
+        let address_lookup =
+            address_lookup::AddressLookupServices::with_metrics(metrics.address_lookup.clone());
         let port_mapper = portmapper::create_client(&portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs
@@ -1000,6 +1003,7 @@ impl EndpointInner {
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
             tls_config: tls_config.clone(),
+            proxy_url: proxy_url.clone(),
             hooks,
             span: span.clone(),
         });
@@ -1761,6 +1765,20 @@ impl Actor {
 
     fn re_stun(&mut self, why: UpdateReason) {
         let state = self.local_interfaces_watcher.get();
+
+        // This block is a band-aid for https://github.com/n0-computer/iroh/issues/4588
+        // See patchbay test `lan_switch_advertises_new_addr_without_relay`
+        #[cfg(not(wasm_browser))]
+        {
+            if self.sock.relay_map.is_empty() {
+                // When there are no relays, update direct addresses immediately from local interfaces
+                // without waiting for net_report. Also reset the periodic timer.
+                self.update_direct_addresses(None);
+                self.periodic_re_stun_timer = new_re_stun_timer(true);
+                return; // Skip schedule_run since we handled it directly
+            }
+        }
+
         self.direct_addr_update_state
             .schedule_run(why, state.into());
     }

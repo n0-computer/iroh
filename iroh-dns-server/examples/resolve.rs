@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use iroh::{
     EndpointId,
     address_lookup::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
@@ -21,22 +21,24 @@ pub enum Env {
 }
 
 #[derive(Debug, Parser)]
+#[command(version, about)]
 struct Cli {
-    #[clap(value_enum, short, long, default_value_t = Env::Staging)]
+    #[arg(short, long, value_enum, default_value_t = Env::Staging)]
     env: Env,
+    #[arg(value_name = "ADDRESS")]
     dns_server: Option<String>,
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Resolve endpoint info by endpoint id.
     Endpoint {
         /// The endpoint id to resolve.
         endpoint_id: EndpointId,
         /// Use a custom domain when resolving endpoint info via DNS.
-        #[clap(long)]
+        #[arg(long)]
         dns_origin_domain: Option<String>,
     },
     /// Resolve endpoint info by domain.

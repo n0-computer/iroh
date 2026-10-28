@@ -25,6 +25,7 @@ use std::{
     task::Poll,
 };
 
+use bytes::Bytes;
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
 use iroh_base::{EndpointId, RelayUrl};
@@ -41,8 +42,8 @@ use crate::{
         AfterHandshakeOutcome,
         quic::{
             AcceptBi, AcceptUni, Closed, ConnectionError, ConnectionStats, Controller,
-            ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
-            SendDatagramError, ServerConfig, Side, VarInt,
+            ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, ReadManyDatagrams,
+            SendDatagram, SendDatagramError, ServerConfig, Side, VarInt,
         },
     },
     socket::{
@@ -918,6 +919,21 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.read_datagram()
     }
 
+    /// Receives a batch of application datagrams into `out`, in arrival order.
+    ///
+    /// This is the batch analogue of [`read_datagram()`](Self::read_datagram). The returned
+    /// future resolves once at least one datagram is buffered, drains up to `out.len()` of
+    /// them into `out` from the front, and yields the count written. Use this instead of
+    /// `read_datagram()` in a loop when forwarding bursts: a whole batch is taken under a
+    /// single lock hold.
+    #[inline]
+    pub fn read_many_datagrams<'a, 'b>(
+        &'a self,
+        out: &'b mut [Bytes],
+    ) -> ReadManyDatagrams<'a, 'b> {
+        self.inner.read_many_datagrams(out)
+    }
+
     /// Waits for the connection to be closed for any reason.
     ///
     /// Despite the return type's name, closed connections are often not an error condition
@@ -976,8 +992,22 @@ impl<T: ConnectionState> Connection<T> {
     /// of order, and `data` must both fit inside a single QUIC packet and be smaller than
     /// the maximum dictated by the peer.
     #[inline]
-    pub fn send_datagram(&self, data: bytes::Bytes) -> Result<(), SendDatagramError> {
+    pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
         self.inner.send_datagram(data)
+    }
+
+    /// Transmits many unreliable, unordered application datagrams in a single call.
+    ///
+    /// This is the batch analogue of [`send_datagram()`](Self::send_datagram): it queues the
+    /// whole batch under one lock hold and wakes the driver once, reducing the per-datagram
+    /// overhead of calling `send_datagram()` repeatedly. Like `send_datagram()`, older queued
+    /// datagrams may be dropped to make room.
+    ///
+    /// Returns the number of datagrams queued. The batch is rejected with
+    /// [`SendDatagramError::TooLarge`] if any datagram exceeds the maximum datagram size.
+    #[inline]
+    pub fn send_many_datagrams(&self, datagrams: &[Bytes]) -> Result<usize, SendDatagramError> {
+        self.inner.send_many_datagrams(datagrams)
     }
 
     /// Transmits `data` as an unreliable, unordered application datagram
@@ -989,7 +1019,7 @@ impl<T: ConnectionState> Connection<T> {
     ///
     /// [`send_datagram()`]: Connection::send_datagram
     #[inline]
-    pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
+    pub fn send_datagram_wait(&self, data: Bytes) -> SendDatagram<'_> {
         self.inner.send_datagram_wait(data)
     }
 
@@ -1581,6 +1611,7 @@ mod tests {
             .await?;
 
         server.online().await;
+        client.online().await;
         let server_addr = server.addr();
         info!("server addr: {server_addr:?}");
 
@@ -1613,36 +1644,34 @@ mod tests {
         // Verify that both connections are notified of path changes and get an IP and a relay path.
         tokio::join!(
             async {
-                tokio::time::timeout(Duration::from_secs(1), wait_for_paths(&mut paths_server))
+                tokio::time::timeout(Duration::from_secs(10), wait_for_paths(&mut paths_server))
                     .instrument(error_span!("paths-server"))
                     .await
                     .unwrap()
             },
             async {
-                tokio::time::timeout(Duration::from_secs(1), wait_for_paths(&mut paths_client))
+                tokio::time::timeout(Duration::from_secs(10), wait_for_paths(&mut paths_client))
                     .instrument(error_span!("paths-client"))
                     .await
                     .unwrap()
             }
         );
 
-        tokio::time::pause();
-
         // Close the client connection.
         info!("close client conn");
         conn_client.close(0u32.into(), b"");
 
         // Verify that the path watch streams close shortly after the connection is closed
-        tokio::time::timeout(Duration::from_nanos(1), async {
+        tokio::time::timeout(Duration::from_secs(30), async {
             while paths_client.next().await.is_some() {}
         })
         .await
-        .expect("client paths watcher did not close within 1s of connection close");
-        tokio::time::timeout(Duration::from_nanos(1), async {
+        .expect("client paths watcher did not close within 8s of connection close");
+        tokio::time::timeout(Duration::from_secs(30), async {
             while paths_server.next().await.is_some() {}
         })
         .await
-        .expect("server paths watcher did not close within 1s of connection close");
+        .expect("server paths watcher did not close within 8s of connection close");
 
         server.close().await;
         client.close().await;

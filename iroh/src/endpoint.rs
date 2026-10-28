@@ -23,7 +23,7 @@ use n0_error::{AnyError, e, ensure, stack_error};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use tokio_util::sync::WaitForCancellationFutureOwned;
-use tracing::{Instrument, Span, debug, event, info_span, instrument, warn};
+use tracing::{Instrument, Span, debug, event, instrument, warn};
 use url::Url;
 
 #[cfg(feature = "unstable-custom-transports")]
@@ -109,11 +109,11 @@ pub use self::{
         FrameStats, FrameType, HandshakeTokenKey, HeaderKey, IdleTimeout, IncomingAlpns, Keys,
         MtuDiscoveryConfig, OpenBi, OpenUni, PacketKey, PathId, PathStats, QuicConnectError,
         QuicTransportConfig, QuicTransportConfigBuilder, ReadDatagram, ReadError, ReadExactError,
-        ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram, SendDatagramError,
-        SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource,
-        TokenLog, TokenReuseError, TransportError, TransportErrorCode, TransportParameters,
-        UdpStats, UnorderedRecvStream, UnsupportedVersion, ValidationTokenConfig, VarInt,
-        VarIntBoundsExceeded, WriteError,
+        ReadManyDatagrams, ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram,
+        SendDatagramError, SendStream, ServerConfig, ServerConfigBuilder, Side, StoppedError,
+        StreamId, TimeSource, TokenLog, TokenReuseError, TransportError, TransportErrorCode,
+        TransportParameters, UdpStats, UnorderedRecvStream, UnsupportedVersion,
+        ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError,
     },
 };
 #[cfg(not(wasm_browser))]
@@ -224,21 +224,21 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the endpoint.
+    #[instrument(name = "endpoint", skip_all, fields(id))]
     pub async fn bind(self) -> Result<Endpoint, BindError> {
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
+        tracing::Span::current().record(
+            "id",
+            tracing::field::display(secret_key.public().fmt_short()),
+        );
 
         let crypto_provider = self
             .crypto_provider
             .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?;
-
         let token_key = Arc::new(
             RustlsTokenKey::new(&mut rand::rng(), &crypto_provider)
                 .ok_or_else(|| e!(BindError::InvalidCryptoProvider))?,
         );
-
-        let span = info_span!("endpoint", id = %secret_key.public().fmt_short());
-        let _guard = span.enter();
-
         let tls_config = tls::TlsConfig::new(
             secret_key.clone(),
             self.max_tls_tickets,
@@ -253,9 +253,7 @@ impl Builder {
             token_store: Arc::new(noq::TokenMemoryCache::default()),
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
-
         let metrics = EndpointMetrics::default();
-
         let tls_config = self
             .ca_tls_config
             .unwrap_or_default()
@@ -537,6 +535,10 @@ impl Builder {
     ///
     /// Not setting this will still allow creating connections, but to accept incoming
     /// connections at least one [ALPN] must be set.
+    ///
+    /// Ordering matters for protocol negotiation. When an incoming connection offers multiple ALPNs,
+    /// the first matching ALPN will be chosen. This means that `alpns` should be ordered such
+    /// that the preferred protocols come first.
     ///
     /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     pub fn alpns(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
@@ -967,6 +969,10 @@ impl Endpoint {
     }
 
     /// Sets the list of accepted ALPN protocols.
+    ///
+    /// Ordering matters for protocol negotiation. When an incoming connection offers multiple ALPNs,
+    /// the first matching ALPN will be chosen. This means that `alpns` should be ordered such
+    /// that the preferred protocols come first.
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
@@ -1494,6 +1500,14 @@ impl Endpoint {
     /// The config is based on the trust anchors set via [`Builder::ca_tls_config`].
     pub fn tls_config(&self) -> &rustls::ClientConfig {
         &self.inner.tls_config
+    }
+
+    /// Returns the proxy that HTTP(S) traffic is sent through, if any.
+    ///
+    /// The pkarr publisher and resolver send their HTTP requests through it.
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn proxy_url(&self) -> Option<&Url> {
+        self.inner.proxy_url.as_ref()
     }
 
     /// Returns the Address Lookup service, if configured.
@@ -3802,7 +3816,8 @@ mod tests {
         Ok(())
     }
 
-    /// Tests that correct logs are emitted when connecting two endpoints with same secret keys to a relay.
+    /// Tests that correct logs are emitted when connecting two endpoints with same secret
+    /// keys to a relay.
     #[tokio::test]
     #[traced_test]
     async fn same_endpoint_id_relay() -> Result {
@@ -3868,10 +3883,14 @@ mod tests {
         // will be routed to the new endpoint and not to the old endpoint anymore.
         // We don't expose being connected to the home relay on the endpoint currently,
         // so we resort to log assertions.
+        // If you think this all wasn't sad enough already,
+        // https://github.com/tokio-rs/tracing/issues/1372 means we need to look for the
+        // repeated `id` field.
         // TODO(Frando): Replace once we add a proper API for this.
         let expected_log_line = format!(
-            "ep2:endpoint{{id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
-            ep2.id().fmt_short()
+            "ep2:endpoint{{id={} id={}}}:relay-actor:active-relay{{url={relay_url}}}:connected: iroh::_events::relay::connected",
+            ep2.id().fmt_short(),
+            ep2.id().fmt_short(),
         );
         tokio::time::timeout(Duration::from_secs(5), async {
             while !logs_contain(&expected_log_line) {

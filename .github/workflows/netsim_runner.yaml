@@ -130,14 +130,14 @@ jobs:
         ref: ${{ inputs.branch }}
 
     - name: Install rust stable
-      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
       with:
         toolchain: stable
 
     - name: Install sccache
       uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       continue-on-error: true
-    - uses: ./.github/workflows/sccache-probe
+    - uses: $/.github/workflows/sccache-probe
 
     - name: Build iroh
       env:
@@ -263,7 +263,7 @@ jobs:
 
     - name: Upload report
       if: always()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       id: upload-report
       with:
         name: netsim-report-${{ env.LAST_COMMIT_SHA }}

@@ -1,6 +1,6 @@
 [package]
 name = "iroh-dns-server"
-version = "1.1.0"
+version = "1.4.1"
 edition = "2024"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
@@ -18,7 +18,7 @@ axum = { version = "0.8", features = ["macros"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 base64-url = "3.0"
 bytes = "1.11"
-clap = { version = "4.5.1", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
 derive_more = { version = "2.0.1", features = [
     "debug",
     "display",
@@ -31,16 +31,17 @@ hickory-server = { version = "0.26.0", features = ["https-ring"] }
 http = "1.0.0"
 humantime = "2.2.0"
 humantime-serde = "1.1.1"
-iroh-base = { version = "1.1.0", path = "../iroh-base", features = ["key"] }
-iroh-metrics = { version = "1.0.1", features = ["service"] }
-iroh-dns = { version = "1.1.0", path = "../iroh-dns" }
-lru = "0.18.0"
-n0-mainline = "0.6"
+hyper-util = { version = "0.1.20", features = ["server-auto", "tokio"] }
+iroh-base = { version = "1.4.1", path = "../iroh-base", features = ["key"] }
+iroh-metrics = { version = "1.0.2", features = ["service"] }
+iroh-dns = { version = "1.4.1", path = "../iroh-dns" }
+lru = "0.18.3"
+n0-mainline = "0.7"
 n0-future = "0.3"
 rcgen = "0.14"
 redb = "4.1.0"
 regex = "1.10.3"
-rustls = { version = "0.23.33", default-features = false }
+rustls = { version = "0.23.46", default-features = false }
 serde = { version = "1", features = ["derive"] }
 socket2 = "0.6"
 n0-error = "1.0.0"
@@ -51,7 +52,7 @@ tokio-rustls-acme = { version = "0.9", features = ["axum"] }
 tokio-stream = "0.1.14"
 tokio-util = "0.7"
 toml = "1.0.6"
-tower-http = { version = "0.6.1", features = ["cors", "trace"] }
+tower-http = { version = "0.7.1", features = ["cors", "trace"] }
 tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
 tracing = "0.1"
 tracing-subscriber = "0.3.18"
@@ -72,6 +73,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 serde_json = "1.0.145"
 tempfile = "3.23.0"
+tokio = { version = "1", features = ["test-util"] }
 
 # patchbay netsim test dependencies (linux only)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
