@@ -251,12 +251,6 @@ pub(super) struct RelayNetworkChangeSender {
 }
 
 impl RelayNetworkChangeSender {
-    pub(super) fn on_network_change(&self, report: &crate::socket::Report) {
-        self.send_relay_actor(RelayActorMessage::NetworkChange {
-            report: report.clone(),
-        });
-    }
-
     /// Triggers an immediate health check on relay connections after a network change.
     pub(super) fn check_connection_after_network_change(&self) {
         self.send_relay_actor(RelayActorMessage::CheckConnectionAfterNetworkChange);
@@ -348,7 +342,7 @@ mod tests {
         num::NonZeroU16,
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicUsize, Ordering},
         },
         task::{Wake, Waker},
         time::Duration,
@@ -436,7 +430,7 @@ mod tests {
             secret_key: SecretKey::from_bytes(&[7u8; 32]),
             dns_resolver: DnsResolver::new(),
             proxy_url: None,
-            ipv6_reported: Arc::new(AtomicBool::new(false)),
+            net_report: crate::net_report::Builder::new().outputs(),
             tls_config: CaTlsConfig::insecure_skip_verify()
                 .client_config(default_provider())
                 .expect("infallible"),

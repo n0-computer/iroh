@@ -1331,9 +1331,9 @@ impl Endpoint {
     /// If no relays are configured, this will pend forever.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
-    /// timeout. We recommend using a timeout close to
-    /// [`crate::NET_REPORT_TIMEOUT`]s, so you can be sure that at least one
-    /// net report has been attempted.
+    /// timeout. A relay handshake can take longer than the first
+    /// [`crate::NET_REPORT_TIMEOUT`] seconds, so pick a timeout that fits your
+    /// application rather than the net report deadline.
     ///
     /// To understand if the endpoint has gone back "offline",
     /// you must use the [`Endpoint::watch_addr`] method, to
@@ -1421,20 +1421,21 @@ impl Endpoint {
     /// whether it is connected to the internet via IPv4 and/or IPv6, its NAT
     /// status, its latency to the relay servers, and its public addresses.
     ///
-    /// The [`Endpoint`] continuously runs net reports to monitor if network
-    /// conditions have changed. This [`Watcher`] will return the latest
-    /// net report.
+    /// The [`Endpoint`] continuously probes its relays to monitor if network
+    /// conditions have changed. This [`Watcher`] returns what it knows now.
     ///
-    /// When issuing the first call to this method the first report might
-    /// still be underway, in this case the [`Watcher`] might not be initialized
-    /// with [`Some`] value yet.  Once the net report has been successfully
-    /// run, the [`Watcher`] will always return [`Some`] immediately, which
-    /// is the most recently run net report.
+    /// The report is a debug view. It changes whenever the endpoint learns
+    /// something: a public address the relays report, a relay latency, or the
+    /// home relay. The endpoint picks the home relay once two relays have
+    /// answered, or after [`crate::NET_REPORT_TIMEOUT`] seconds. An early report can
+    /// still lack fields, for example the IPv6 address or the mapping-varies
+    /// verdict.
     ///
-    /// The returned watcher only becomes disconnected once the last clone of the [`Endpoint`]
-    /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
-    /// via [`Watcher::stream`] only terminates once the endpoint stops. If you want to stop a
-    /// task once the endpoint stops combine with [`Self::closed`].
+    /// The [`Watcher`] holds [`None`] until the endpoint has learned anything.
+    ///
+    /// The returned watcher disconnects when the endpoint closes and network probing stops.
+    /// A stream created via [`Watcher::stream`] then terminates. The watcher retains its
+    /// last observed value, which remains available through [`Watcher::get`].
     ///
     /// # Examples
     ///
@@ -1951,6 +1952,16 @@ impl RelayStatus {
     /// than retrying.
     pub fn last_error(&self) -> Option<&AnyError> {
         self.state.last_failure().map(RelayConnectionFailure::error)
+    }
+
+    /// Returns whether the last attempt to dial the relay failed.
+    ///
+    /// The relay could not be reached just now, unlike after a lost
+    /// connection, which a relay restart also causes.
+    pub(crate) fn dial_failed(&self) -> bool {
+        self.state
+            .last_failure()
+            .is_some_and(RelayConnectionFailure::dial_failed)
     }
 
     /// Returns the reason if the relay server denied our authentication.
@@ -4006,7 +4017,12 @@ mod tests {
 
         #[cfg(feature = "unstable-net-report")]
         let mut net_reports = {
-            let net_reports = ep.net_report().stream();
+            let net_reports = ep.net_report();
+            assert!(
+                !net_reports.is_connected(),
+                "closed endpoint stops netreport"
+            );
+            let net_reports = net_reports.stream();
 
             // returns None
             let net_report = ep.net_report().get();

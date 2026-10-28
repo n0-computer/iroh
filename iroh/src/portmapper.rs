@@ -5,7 +5,16 @@
 
 use std::net::SocketAddrV4;
 
-use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
+#[cfg(all(not(wasm_browser), feature = "portmapper"))]
+use {
+    n0_future::time::{self, Duration},
+    rand::RngExt,
+    tokio::sync::watch,
+    tracing::{debug, trace},
+};
+
+use crate::metrics::EndpointMetrics;
 
 /// Configuration for the portmapper service (UPnP, PCP, NAT-PMP).
 ///
@@ -38,63 +47,113 @@ impl Default for PortmapperConfig {
     }
 }
 
-pub(crate) fn create_client(config: &PortmapperConfig) -> Client {
-    match config {
-        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
-        PortmapperConfig::Enabled {} => Client::Enabled(::portmapper::Client::default()),
-        _ => {
-            let (tx, rx) = watch::channel(None);
-            Client::Disabled { _tx: tx, rx }
-        }
+pub(crate) fn create_client(
+    config: &PortmapperConfig,
+    metrics: EndpointMetrics,
+    shutdown: CancellationToken,
+) -> Client {
+    #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+    if matches!(config, PortmapperConfig::Enabled { .. }) {
+        let service = ::portmapper::Client::default();
+        let external = service.watch_external_address();
+        let interval = rand::rng().random_range(Duration::from_secs(20)..=Duration::from_secs(26));
+        return Client::Enabled {
+            service,
+            external,
+            retry: time::interval(interval),
+            metrics,
+            shutdown,
+        };
     }
+    let _ = (config, metrics, shutdown);
+    Client::Disabled
 }
 
-/// Portmapper client: either the real implementation or a no-op.
-///
-/// The disabled variant is used when the `portmapper` feature is off, on wasm,
-/// or when portmapping is disabled via [`PortmapperConfig::Disabled`].
+/// Owns mapping retries, address notifications, and mapping release on drop.
 #[derive(Debug)]
 pub(crate) enum Client {
-    /// The real portmapper client (requires the `portmapper` feature).
     #[cfg(all(not(wasm_browser), feature = "portmapper"))]
-    Enabled(::portmapper::Client),
-    /// No-op: keeps the sender alive so the receiver never closes.
-    Disabled {
-        _tx: watch::Sender<Option<SocketAddrV4>>,
-        rx: watch::Receiver<Option<SocketAddrV4>>,
+    Enabled {
+        service: ::portmapper::Client,
+        external: watch::Receiver<Option<SocketAddrV4>>,
+        retry: time::Interval,
+        metrics: EndpointMetrics,
+        shutdown: CancellationToken,
     },
+    Disabled,
 }
 
 impl Client {
-    pub(crate) fn procure_mapping(&self) {
+    /// Waits for a changed mapping while retrying failed acquisition attempts.
+    pub(crate) async fn updated(&mut self) -> Option<SocketAddrV4> {
+        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+        while let Self::Enabled {
+            external,
+            retry,
+            metrics,
+            ..
+        } = self
+        {
+            tokio::select! {
+                changed = external.changed() => {
+                    if changed.is_err() { break; }
+                    let external = *external.borrow_and_update();
+                    metrics.socket.actor_tick_portmap_changed.inc();
+                    if external.is_some() {
+                        metrics.net_report.portmap_external_address_updated.inc();
+                    }
+                    debug!(?external, "external address updated");
+                    return external;
+                }
+                _ = retry.tick() => {
+                    metrics.socket.actor_tick_re_stun.inc();
+                }
+            }
+            self.procure_mapping();
+        }
+        std::future::pending().await
+    }
+
+    pub(crate) fn external_address(&self) -> Option<SocketAddrV4> {
         match self {
             #[cfg(all(not(wasm_browser), feature = "portmapper"))]
-            Client::Enabled(c) => c.procure_mapping(),
-            Client::Disabled { .. } => {}
+            Self::Enabled { external, .. } => *external.borrow(),
+            Self::Disabled => None,
+        }
+    }
+
+    /// Asks for a mapping if none exists; the service renews existing mappings.
+    pub(crate) fn procure_mapping(&self) {
+        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+        if let Self::Enabled {
+            service,
+            metrics,
+            shutdown,
+            ..
+        } = self
+        {
+            if shutdown.is_cancelled() {
+                trace!("skipping port mapping: shutting down");
+                return;
+            }
+            metrics.net_report.portmap_attempts.inc();
+            service.procure_mapping();
         }
     }
 
     pub(crate) fn update_local_port(&self, _port: std::num::NonZeroU16) {
-        match self {
-            #[cfg(all(not(wasm_browser), feature = "portmapper"))]
-            Client::Enabled(c) => c.update_local_port(_port),
-            Client::Disabled { .. } => {}
+        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+        if let Self::Enabled { service, .. } = self {
+            service.update_local_port(_port);
         }
     }
+}
 
-    pub(crate) fn deactivate(&self) {
-        match self {
-            #[cfg(all(not(wasm_browser), feature = "portmapper"))]
-            Client::Enabled(c) => c.deactivate(),
-            Client::Disabled { .. } => {}
-        }
-    }
-
-    pub(crate) fn watch_external_address(&self) -> watch::Receiver<Option<SocketAddrV4>> {
-        match self {
-            #[cfg(all(not(wasm_browser), feature = "portmapper"))]
-            Client::Enabled(c) => c.watch_external_address(),
-            Client::Disabled { rx, .. } => rx.clone(),
+impl Drop for Client {
+    fn drop(&mut self) {
+        #[cfg(all(not(wasm_browser), feature = "portmapper"))]
+        if let Self::Enabled { service, .. } = self {
+            service.deactivate();
         }
     }
 }

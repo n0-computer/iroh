@@ -113,7 +113,9 @@ pub struct Metrics {
     pub actor_tick_main: Counter,
     /// Number of actor messages processed by the socket actor loop.
     pub actor_tick_msg: Counter,
-    /// Number of periodic re-STUN timer ticks handled by the socket actor loop.
+    /// Number of periodic port mapping timer ticks handled by the socket actor loop.
+    ///
+    /// The name dates from when this timer also started net reports.
     pub actor_tick_re_stun: Counter,
     /// Number of port-mapping change events handled by the socket actor loop.
     pub actor_tick_portmap_changed: Counter,

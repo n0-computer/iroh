@@ -281,16 +281,20 @@ async fn relay_reconnect_relay_restart() -> Result {
     let (restart_tx, restart_rx) = oneshot::channel::<()>();
     let (restarted_tx, restarted_rx) = oneshot::channel::<()>();
     let relay_task = dev_relay.spawn(async move |_dev| {
-        let (relay_map, server) = util::relay::run_relay_server().await.expect("relay spawn");
-        map_tx.send(relay_map).expect("test task alive");
+        let (relay_config, server) = util::relay::run_relay_server("relay.test")
+            .await
+            .expect("relay spawn");
+        map_tx
+            .send(iroh::RelayMap::from(relay_config))
+            .expect("test task alive");
         restart_rx.await.expect("restart signal");
         server.shutdown().await.expect("relay shutdown");
         info!("relay stopped, starting a new relay on the same ports");
         // The old server's sockets are released asynchronously after
         // shutdown() returns; retry briefly if a port is still taken.
         let mut attempts = 0;
-        let (_relay_map, _server) = loop {
-            match util::relay::run_relay_server().await {
+        let (_relay_config, _server) = loop {
+            match util::relay::run_relay_server("relay.test").await {
                 Ok(relay) => break relay,
                 Err(err) if attempts < 20 => {
                     attempts += 1;

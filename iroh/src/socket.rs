@@ -15,7 +15,7 @@
 //! however, read any packets that come off the UDP sockets.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     fmt::Display,
     io,
     net::{IpAddr, SocketAddr},
@@ -26,32 +26,20 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+#[cfg(not(wasm_browser))]
+use iroh_relay::quic::QuicClient;
 use iroh_relay::{RelayConfig, RelayMap};
-use mapped_addrs::MultipathMappedAddr;
 use n0_error::{AnyError, anyerr, bail, e, stack_error};
 use n0_future::{
-    MaybeFuture,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
 use n0_watcher::{self, Watchable, Watcher};
-use netwatch::netmon;
-#[cfg(not(wasm_browser))]
-use netwatch::{
-    interfaces::{IpNet, Ipv6AddrFlags},
-    ip::LocalAddresses,
-};
 use noq::{
-    NetworkChangeHint, TokenStore,
+    TokenStore,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
 };
-use rand::RngExt;
-use rustc_hash::FxHashSet;
-use tokio::sync::{
-    Mutex as AsyncMutex,
-    mpsc::{self},
-    oneshot,
-};
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tracing::{Instrument, Level, Span, debug, error, event, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, Transport, TransportConfig};
@@ -63,17 +51,13 @@ use self::{
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-#[cfg(not(wasm_browser))]
-use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
-    defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::{
         LocalTransportAddr, RelayStatus, hooks::EndpointHooksList, quic::QuicTransportConfig,
     },
     metrics::EndpointMetrics,
-    net_report::{self, IfStateDetails, Report},
-    portmapper,
+    net_report, portmapper,
     runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
@@ -86,6 +70,8 @@ use crate::{
     },
 };
 
+#[cfg(not(wasm_browser))]
+mod direct_addrs;
 mod metrics;
 
 pub(crate) mod biased_rtt_path_selector;
@@ -349,10 +335,9 @@ pub(crate) struct Socket {
     // - Networking Info
     /// Our discovered direct addresses.
     direct_addrs: DiscoveredDirectAddrs,
-    /// Our latest net-report
-    net_report: Watchable<(Option<Report>, UpdateReason)>,
-    /// If the last net_report report, reports IPv6 to be available.
-    ipv6_reported: Arc<AtomicBool>,
+    /// What the net report learned, for [`Socket::net_report`].
+    #[cfg(feature = "unstable-net-report")]
+    net_report: n0_watcher::Direct<Option<net_report::Report>>,
     /// Maps for resolving mapped addrs to/from IP and relay addresses.
     mapped_addrs: MappedAddrs,
 
@@ -479,8 +464,8 @@ impl Socket {
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
     #[cfg(feature = "unstable-net-report")]
-    pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
-        self.net_report.watch().map(|(r, _)| r)
+    pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<net_report::Report>> + use<> {
+        self.net_report.clone()
     }
 
     /// Watch for changes to the home relay.
@@ -692,151 +677,6 @@ impl Socket {
     }
 }
 
-/// Manages currently running net reports to learn this endpoint's IP addresses.
-///
-/// Invariants:
-/// - only one direct addr update must be running at a time
-/// - if an update is scheduled while another one is running, remember that
-///   and start a new one when the current one has finished
-#[derive(Debug)]
-struct DirectAddrUpdateState {
-    /// If set, start a new update as soon as the current one is finished.
-    want_update: Option<UpdateReason>,
-    sock: Arc<Socket>,
-    port_mapper: portmapper::Client,
-    /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
-    net_reporter: Arc<AsyncMutex<net_report::Client>>,
-    relay_map: RelayMap,
-    run_done: mpsc::Sender<()>,
-    shutdown_token: CancellationToken,
-}
-
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
-enum UpdateReason {
-    /// Initial state
-    #[default]
-    None,
-    Periodic,
-    PortmapUpdated,
-    LinkChangeMajor,
-    LinkChangeMinor,
-    RelayMapChange,
-}
-
-impl UpdateReason {
-    fn is_major(self) -> bool {
-        matches!(self, Self::LinkChangeMajor | Self::RelayMapChange)
-    }
-}
-
-impl DirectAddrUpdateState {
-    fn new(
-        sock: Arc<Socket>,
-        port_mapper: portmapper::Client,
-        net_reporter: Arc<AsyncMutex<net_report::Client>>,
-        relay_map: RelayMap,
-        run_done: mpsc::Sender<()>,
-        shutdown_token: CancellationToken,
-    ) -> Self {
-        DirectAddrUpdateState {
-            want_update: Default::default(),
-            port_mapper,
-            net_reporter,
-            sock,
-            relay_map,
-            run_done,
-            shutdown_token,
-        }
-    }
-
-    /// Schedules a new run, either starting it immediately if none is running or
-    /// scheduling it for later.
-    fn schedule_run(&mut self, why: UpdateReason, if_state: IfStateDetails) {
-        match self.net_reporter.clone().try_lock_owned() {
-            Ok(net_reporter) => {
-                self.run(why, if_state, net_reporter);
-            }
-            Err(_) => {
-                let _ = self.want_update.insert(why);
-            }
-        }
-    }
-
-    /// If another run is needed, triggers this run, otherwise does nothing.
-    fn try_run(&mut self, if_state: IfStateDetails) {
-        match self.net_reporter.clone().try_lock_owned() {
-            Ok(net_reporter) => {
-                if let Some(why) = self.want_update.take() {
-                    self.run(why, if_state, net_reporter);
-                }
-            }
-            Err(_) => {
-                // do nothing
-            }
-        }
-    }
-
-    /// Trigger a new run.
-    fn run(
-        &mut self,
-        why: UpdateReason,
-        if_state: IfStateDetails,
-        mut net_reporter: tokio::sync::OwnedMutexGuard<net_report::Client>,
-    ) {
-        debug!("starting direct addr update ({:?})", why);
-        // Don't start a net report probe if we know
-        // we are shutting down
-        if self.shutdown_token.is_cancelled() {
-            debug!("skipping net_report, socket is shutting down");
-            // deactivate portmapper
-            self.port_mapper.deactivate();
-            return;
-        }
-        if self.relay_map.is_empty() {
-            debug!("skipping net_report, empty RelayMap");
-            self.sock.net_report.set((None, why)).ok();
-            return;
-        }
-
-        self.sock.metrics.net_report.portmap_attempts.inc();
-        self.port_mapper.procure_mapping();
-
-        trace!("requesting net_report report");
-        let sock = self.sock.clone();
-
-        let run_done = self.run_done.clone();
-
-        // Ensure that reports are cancelled when we shutdown
-        let token = self.shutdown_token.child_token();
-        let inner_token = token.child_token();
-        task::spawn(
-            async move {
-                let fut = token.run_until_cancelled(time::timeout(
-                    NET_REPORT_TIMEOUT,
-                    net_reporter.get_report(if_state, why.is_major(), inner_token),
-                ));
-
-                match fut.await {
-                    Some(Ok(report)) => {
-                        sock.net_report.set((Some(report), why)).ok();
-                    }
-                    Some(Err(time::Elapsed { .. })) => {
-                        warn!("net_report report timed out");
-                    }
-                    None => {
-                        trace!("net_report cancelled");
-                    }
-                }
-
-                // mark run as finished
-                debug!("direct addr update done ({:?})", why);
-                run_done.send(()).await.ok();
-            }
-            .instrument(tracing::Span::current()),
-        );
-    }
-}
-
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
@@ -893,7 +733,6 @@ impl EndpointInner {
 
         let address_lookup =
             address_lookup::AddressLookupServices::with_metrics(metrics.address_lookup.clone());
-        let port_mapper = portmapper::create_client(&portmapper_config);
 
         let relay_transport_configs: Vec<_> = transport_configs
             .iter()
@@ -917,21 +756,30 @@ impl EndpointInner {
             .next()
             .unwrap_or_else(RelayMap::empty);
 
-        let ipv6_reported = Arc::new(AtomicBool::new(false));
+        // Prepare subscriptions before constructing the endpoint used for QAD.
+        let net_report = net_report::Builder::new();
 
+        // The relay transport publishes the state of its home relay
+        // connection here, and the net report watches it.
+        let relay_status = HomeRelayWatch::default();
         let relay_actor_config = RelayActorConfig {
-            my_relay: HomeRelayWatch::default(),
+            my_relay: relay_status.clone(),
             secret_key: secret_key.clone(),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
-            ipv6_reported: ipv6_reported.clone(),
+            net_report: net_report.outputs(),
             tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
             relay_map: relay_map.clone(),
         };
 
         let shutdown_state = ShutdownState::default();
+        let port_mapper = portmapper::create_client(
+            &portmapper_config,
+            metrics.clone(),
+            shutdown_state.at_close_start.child_token(),
+        );
         let shutdown_token = shutdown_state.at_endpoint_closed.child_token();
 
         let transports = Transports::bind(
@@ -987,14 +835,14 @@ impl EndpointInner {
         let sock = Arc::new(Socket {
             remote_actors: remote_map.senders(),
             shutdown: shutdown_state,
-            ipv6_reported,
             mapped_addrs: remote_map.mapped_addrs.clone(),
             address_lookup,
             relay_map: relay_map.clone(),
             address_lookup_user_data: RwLock::new(address_lookup_user_data),
             configured_addrs: RwLock::new(configured_addrs),
             direct_addrs,
-            net_report: Watchable::new((None, UpdateReason::None)),
+            #[cfg(feature = "unstable-net-report")]
+            net_report: net_report.outputs().report(),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
             metrics: metrics.clone(),
@@ -1030,69 +878,49 @@ impl EndpointInner {
         )
         .map_err(|err| e!(BindError::CreateQuicEndpoint, err))?;
 
-        let network_monitor = netmon::Monitor::new()
-            .await
-            .map_err(|err| e!(BindError::CreateNetmonMonitor, anyerr!(err)))?;
-
-        #[cfg(not(wasm_browser))]
-        let net_report_config = {
-            // Set a `QuicConfig` for address discovery (QAD), but only if we have IP transports.
-            //
-            // If there are no IP transports configured, then we don't set a QuicConfig.
-            // If we would, the `noq::Endpoint` passed along will not have IP connectivity,
-            // and the QAD probes that connect to the relay's QUIC endpoints would time out
-            // because all outgoing packets to IP destinations would be dropped.
-            let qad_config = has_ip_transports.then(|| QuicConfig {
-                ep: endpoint.clone(),
-                client_config: tls_config.clone(),
-                ipv4: true,
-                ipv6: has_ipv6_transport,
-            });
-            net_report::Options::new(tls_config.clone())
-                .quic_config(qad_config)
-                .proxy_url(proxy_url.clone())
-                .net_report_config(net_report_config)
-        };
-
-        #[cfg(wasm_browser)]
-        let net_report_config = net_report::Options::default().net_report_config(net_report_config);
-
-        let net_reporter = net_report::Client::new(
+        let net_report_opts = net_report::Options {
+            config: net_report_config,
+            timing: Default::default(),
+            relay_map,
+            relay_status: relay_status.watch(),
+            // Run QUIC address discovery (QAD) only if we have IP transports.
+            // Without them, the `noq::Endpoint` has no IP connectivity, and
+            // QAD probes to the relays' QUIC endpoints would time out because
+            // all outgoing packets to IP destinations are dropped.
+            #[cfg(not(wasm_browser))]
+            quic_client: has_ip_transports
+                .then(|| QuicClient::new(endpoint.clone(), tls_config.clone())),
+            #[cfg(not(wasm_browser))]
+            qad_ipv6: has_ipv6_transport,
             #[cfg(not(wasm_browser))]
             dns_resolver,
-            relay_map.clone(),
-            net_report_config,
-            metrics.net_report.clone(),
-        );
+            #[cfg(not(wasm_browser))]
+            tls_config: tls_config.clone(),
+            #[cfg(not(wasm_browser))]
+            proxy_url: proxy_url.clone(),
+        };
 
-        let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
-        let direct_addr_update_state = DirectAddrUpdateState::new(
-            sock.clone(),
-            port_mapper,
-            Arc::new(AsyncMutex::new(net_reporter)),
-            relay_map,
-            direct_addr_done_tx,
-            sock.shutdown.at_close_start.child_token(),
-        );
-
-        let local_interfaces_watcher = network_monitor.interface_state();
+        let net_report = net_report
+            .spawn(
+                net_report_opts,
+                metrics.net_report.clone(),
+                sock.shutdown.at_close_start.child_token(),
+            )
+            .await
+            .map_err(|err| e!(BindError::CreateNetmonMonitor, anyerr!(err)))?;
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
             endpoint: endpoint.clone(),
             sock: sock.clone(),
             remote_map,
-            periodic_re_stun_timer: new_re_stun_timer(false),
-            network_monitor,
-            local_interfaces_watcher,
-            direct_addr_update_state,
             transports_network_change,
-            direct_addr_done_rx,
-            call_notify_quic_network_change: None,
+            net_report,
+            port_mapper,
         };
         // Initialize addresses
         #[cfg(not(wasm_browser))]
-        actor.update_direct_addresses(None);
+        actor.update_direct_addresses();
 
         let actor_task = task::spawn(
             actor
@@ -1395,49 +1223,6 @@ enum ActorMessage {
     ForceNetworkChange(bool),
 }
 
-/// State for polling until a default route is available after a network change.
-///
-/// When a network change is detected but no default route exists yet (e.g.,
-/// interface just came up but gateway not assigned), we poll with exponential
-/// backoff until the gateway appears. This avoids the fixed 2s delay that was
-/// too slow for interface recovery scenarios.
-struct PendingNetworkChangeNotify {
-    /// Next time to check for default route.
-    next_check: Instant,
-    /// Current backoff interval.
-    interval: Duration,
-    /// Whether this was a major change.
-    is_major: bool,
-    /// When we started polling (to enforce a max wait).
-    started: Instant,
-}
-
-impl PendingNetworkChangeNotify {
-    const INITIAL_INTERVAL: Duration = Duration::from_millis(100);
-    const MAX_INTERVAL: Duration = Duration::from_secs(1);
-    const MAX_WAIT: Duration = Duration::from_secs(5);
-
-    fn new(is_major: bool) -> Self {
-        Self {
-            next_check: Instant::now() + Self::INITIAL_INTERVAL,
-            interval: Self::INITIAL_INTERVAL,
-            is_major,
-            started: Instant::now(),
-        }
-    }
-
-    /// Advance to the next check interval (exponential backoff, capped).
-    fn advance(&mut self) {
-        self.interval = (self.interval * 2).min(Self::MAX_INTERVAL);
-        self.next_check = Instant::now() + self.interval;
-    }
-
-    /// Whether we've exceeded the maximum wait time.
-    fn expired(&self) -> bool {
-        self.started.elapsed() >= Self::MAX_WAIT
-    }
-}
-
 struct Actor {
     /// A clone of the quinn Endpoint.
     ///
@@ -1459,25 +1244,11 @@ struct Actor {
     sock: Arc<Socket>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
     remote_map: RemoteMap,
-    /// When set, is an AfterFunc timer that will call Socket::do_periodic_stun.
-    periodic_re_stun_timer: time::Interval,
-    /// An actor watching the local network interfaces.
-    ///
-    /// The monitored changes are emitted via [`Self::local_interfaces_watcher`].
-    network_monitor: netmon::Monitor,
-    /// Watcher for changes to the local network interfaces, IP addresses and routes.
-    local_interfaces_watcher: n0_watcher::Direct<netmon::State>,
     transports_network_change: transports::NetworkChangeSender,
-    /// Indicates the direct addr update state.
-    direct_addr_update_state: DirectAddrUpdateState,
-    direct_addr_done_rx: mpsc::Receiver<()>,
-    /// Polling state for [`Actor::notify_quic_network_change`].
-    ///
-    /// When a network change is detected but no default route is available yet,
-    /// we poll with exponential backoff (100ms, 200ms, 400ms, 800ms, 1s, 1s, ...)
-    /// until the gateway appears. Once it does, we notify immediately.
-    /// After 5s total we notify anyway even without a gateway.
-    call_notify_quic_network_change: Option<PendingNetworkChangeNotify>,
+    /// Handle to the net report, which runs on its own.
+    net_report: net_report::Client,
+    /// Port mapper client for UPnP/PCP.
+    port_mapper: portmapper::Client,
 }
 
 impl Actor {
@@ -1487,33 +1258,13 @@ impl Actor {
         shutdown_token: CancellationToken,
         mut local_addrs_watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
     ) {
-        // Setup network monitoring
-        let mut current_netmon_state = self.local_interfaces_watcher.get();
-
-        let mut portmap_watcher = self
-            .direct_addr_update_state
-            .port_mapper
-            .watch_external_address();
-
         let mut receiver_closed = false;
-        let mut portmap_watcher_closed = false;
-
-        let mut net_report_watcher = self.sock.net_report.watch();
 
         // ensure we are doing an initial publish of our addresses
         self.sock.publish_my_addr();
 
         while !shutdown_token.is_cancelled() {
             self.sock.metrics.socket.actor_tick_main.inc();
-            let portmap_watcher_changed = portmap_watcher.changed();
-
-            let notify_quic_network_change = match &self.call_notify_quic_network_change {
-                Some(pending) => {
-                    MaybeFuture::Some(n0_future::time::sleep_until(pending.next_check))
-                }
-                None => MaybeFuture::None,
-            };
-            n0_future::pin!(notify_quic_network_change);
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -1532,11 +1283,6 @@ impl Actor {
                     self.sock.metrics.socket.actor_tick_msg.inc();
                     self.handle_actor_message(msg).await;
                 }
-                tick = self.periodic_re_stun_timer.tick() => {
-                    trace!("tick: re_stun {:?}", tick);
-                    self.sock.metrics.socket.actor_tick_re_stun.inc();
-                    self.re_stun(UpdateReason::Periodic);
-                }
                 new_addr = local_addrs_watcher.updated() => {
                     match new_addr {
                         Ok(addrs) => {
@@ -1550,88 +1296,26 @@ impl Actor {
                         }
                     }
                 }
-                report = net_report_watcher.updated() => {
-                    match report {
-                        Ok((report, _)) => {
-                            self.handle_net_report_report(report);
-                            #[cfg(not(wasm_browser))]
-                            {
-                                self.periodic_re_stun_timer = new_re_stun_timer(true);
-                            }
-                        }
-                        Err(_) => {
-                            warn!("net report watcher stopped");
-                        }
-                    }
+                external = self.port_mapper.updated() => {
+                    trace!(?external, "tick: portmap changed");
+                    #[cfg(not(wasm_browser))]
+                    self.update_direct_addresses();
                 }
-                reason = self.direct_addr_done_rx.recv() => {
-                    match reason {
-                        Some(()) => {
-                            // check if a new run needs to be scheduled
-                            let state = self.local_interfaces_watcher.get();
-                            self.direct_addr_update_state.try_run(state.into());
-                        }
-                        None => {
-                            warn!("direct addr watcher died");
-                        }
+                update = self.net_report.updated() => match update {
+                    net_report::Update::AddressesChanged => {
+                        #[cfg(not(wasm_browser))]
+                        self.update_direct_addresses();
                     }
-                }
-                change = portmap_watcher_changed, if !portmap_watcher_closed => {
-                    if change.is_err() {
-                        trace!("tick: portmap watcher closed");
-                        self.sock.metrics.socket.actor_tick_other.inc();
-
-                        portmap_watcher_closed = true;
-                        continue;
+                    net_report::Update::NetworkChanged { is_major } => {
+                        self.sock.metrics.socket.actor_link_change.inc();
+                        self.handle_network_change(is_major);
                     }
-
-                    trace!("tick: portmap changed");
-                    self.sock.metrics.socket.actor_tick_portmap_changed.inc();
-                    let new_external_address = *portmap_watcher.borrow();
-                    if new_external_address.is_some() {
-                        self.sock.metrics.net_report.portmap_external_address_updated.inc();
+                    net_report::Update::NetworkReady { is_major, hint } => {
+                        self.endpoint.handle_network_change(Some(hint));
+                        self.remote_map.on_network_change(is_major);
                     }
-                    debug!("external address updated: {new_external_address:?}");
-                    self.re_stun(UpdateReason::PortmapUpdated);
                 },
-                state = self.local_interfaces_watcher.updated() => {
-                    let Ok(state) = state else {
-                        trace!("tick: link change receiver closed");
-                        self.sock.metrics.socket.actor_tick_other.inc();
-                        continue;
-                    };
-                    let is_major = state.is_major_change(&current_netmon_state);
-                    event!(
-                        target: "iroh::_events::link_change",
-                        Level::DEBUG,
-                        ?state,
-                        is_major
-                    );
-                    current_netmon_state = state;
-                    self.sock.metrics.socket.actor_link_change.inc();
-                    self.handle_network_change(is_major);
-                }
                 _remote_id = self.remote_map.cleanup() => {},
-                _ = &mut notify_quic_network_change => {
-                    let has_network = self.has_usable_network();
-                    let Some(pending) = self.call_notify_quic_network_change.as_mut() else {
-                        continue;
-                    };
-                    if has_network || pending.expired() {
-                        // Gateway appeared or we've waited long enough, notify now.
-                        let is_major = pending.is_major;
-                        self.call_notify_quic_network_change = None;
-                        self.notify_quic_network_change(is_major);
-                    } else {
-                        // No gateway yet, back off and try again.
-                        trace!(
-                            interval = ?pending.interval,
-                            elapsed = ?pending.started.elapsed(),
-                            "no default route yet, retrying"
-                        );
-                        pending.advance();
-                    }
-                }
                 else => {
                     trace!("tick: else");
                 }
@@ -1639,24 +1323,9 @@ impl Actor {
         }
     }
 
-    /// Whether the local network has a default route and at least one IP address.
-    fn has_usable_network(&mut self) -> bool {
-        #[cfg(target_family = "wasm")]
-        {
-            true
-        }
-        #[cfg(not(target_family = "wasm"))]
-        {
-            let interfaces = self.local_interfaces_watcher.get();
-            interfaces.default_route_interface.is_some()
-                && (interfaces.have_v4 || interfaces.have_v6)
-        }
-    }
-
     /// Handles a change detected in the local network conditions.
     ///
-    /// This is triggered when the netmon actor detects a change in the local network
-    /// interfaces, assigned IP addresses and routes.
+    /// This is triggered by the network changes published by net report.
     fn handle_network_change(&mut self, is_major: bool) {
         debug!(is_major, "link change detected");
 
@@ -1665,122 +1334,11 @@ impl Actor {
                 warn!("failed to rebind transports: {err:?}");
             }
             self.transports_network_change.check_relay_connection();
-
-            #[cfg(not(wasm_browser))]
-            self.sock.dns_resolver.reset();
-            self.re_stun(UpdateReason::LinkChangeMajor);
-        } else {
-            self.re_stun(UpdateReason::LinkChangeMinor);
         }
-
-        if self.has_usable_network() {
-            // This is considered a usable network change, propagate it to the QUIC stack
-            // right away.
-            self.call_notify_quic_network_change = None;
-            self.notify_quic_network_change(is_major);
-        } else {
-            // No default route yet (e.g., interface just came up but gateway not
-            // assigned). Poll with exponential backoff until the gateway appears.
-            match &mut self.call_notify_quic_network_change {
-                Some(pending) => {
-                    // Update is_major if this change is more severe.
-                    pending.is_major |= is_major;
-                }
-                None => {
-                    self.call_notify_quic_network_change =
-                        Some(PendingNetworkChangeNotify::new(is_major));
-                }
-            }
-        }
-    }
-
-    /// Notifies the QUIC stack of the network change we observed.
-    ///
-    /// This is decoupled from receiving the network change, because we try to debounce
-    /// network changes as they often arrive in groups.
-    fn notify_quic_network_change(&mut self, is_major: bool) {
-        #[derive(Debug)]
-        struct Hint {
-            local_addrs: FxHashSet<IpAddr>,
-        }
-
-        impl NetworkChangeHint for Hint {
-            fn is_path_recoverable(
-                &self,
-                _path_id: noq::PathId,
-                network_path: noq_proto::FourTuple,
-            ) -> bool {
-                match MultipathMappedAddr::from(network_path.remote()) {
-                    MultipathMappedAddr::Mixed(_) => {
-                        // This address is only ever used to send an Initial packet to, it
-                        // should never appear as an established path.
-                        error!("A mixed address can not be used for network changes");
-                        false
-                    }
-                    MultipathMappedAddr::Relay(_) => {
-                        // We pretend the relay path is never affected by link changes. The
-                        // relay actor transparently reconnects and the addresses never
-                        // change.
-                        true
-                    }
-                    MultipathMappedAddr::Ip(_) => {
-                        // If we no longer have a valid interface to send from for a local
-                        // IP then it can not be recovered.
-                        match network_path.local_ip() {
-                            Some(local_ip) => self.local_addrs.contains(&local_ip),
-                            None => true,
-                        }
-                    }
-                    MultipathMappedAddr::Custom(_) => {
-                        // Assume it is unrecoverable for now
-                        false
-                    }
-                }
-            }
-        }
-
-        let hint = Hint {
-            #[cfg(not(wasm_browser))]
-            local_addrs: {
-                let interfaces = self.local_interfaces_watcher.get();
-                interfaces
-                    .local_addresses
-                    .regular
-                    .iter()
-                    .chain(interfaces.local_addresses.loopback.iter())
-                    .copied()
-                    .collect()
-            },
-            #[cfg(wasm_browser)]
-            local_addrs: Default::default(),
-        };
-
-        self.endpoint.handle_network_change(Some(Arc::new(hint)));
-        self.remote_map.on_network_change(is_major);
-    }
-
-    fn handle_relay_map_change(&mut self) {
-        self.re_stun(UpdateReason::RelayMapChange);
-    }
-
-    fn re_stun(&mut self, why: UpdateReason) {
-        let state = self.local_interfaces_watcher.get();
-
-        // This block is a band-aid for https://github.com/n0-computer/iroh/issues/4588
-        // See patchbay test `lan_switch_advertises_new_addr_without_relay`
+        // Refresh local addresses and the port mapping after the transport rebind.
+        self.port_mapper.procure_mapping();
         #[cfg(not(wasm_browser))]
-        {
-            if self.sock.relay_map.is_empty() {
-                // When there are no relays, update direct addresses immediately from local interfaces
-                // without waiting for net_report. Also reset the periodic timer.
-                self.update_direct_addresses(None);
-                self.periodic_re_stun_timer = new_re_stun_timer(true);
-                return; // Skip schedule_run since we handled it directly
-            }
-        }
-
-        self.direct_addr_update_state
-            .schedule_run(why, state.into());
+        self.update_direct_addresses();
     }
 
     /// Processes an incoming actor message.
@@ -1789,10 +1347,10 @@ impl Actor {
     async fn handle_actor_message(&mut self, msg: ActorMessage) {
         match msg {
             ActorMessage::NetworkChange => {
-                self.network_monitor.network_change().await.ok();
+                self.net_report.network_change();
             }
             ActorMessage::RelayMapChange => {
-                self.handle_relay_map_change();
+                self.net_report.relays_changed();
             }
             ActorMessage::ResolveRemote(addr, tx) => {
                 self.remote_map.resolve_remote(addr, tx).await;
@@ -1802,14 +1360,11 @@ impl Actor {
             }
             ActorMessage::DirectAddrRefresh => {
                 #[cfg(not(wasm_browser))]
-                {
-                    let (report, _reason) = self.sock.net_report.get();
-                    self.update_direct_addresses(report.as_ref());
-                }
+                self.update_direct_addresses();
             }
             #[cfg(all(test, with_crypto_provider))]
             ActorMessage::ForceNetworkChange(is_major) => {
-                self.handle_network_change(is_major);
+                self.net_report.force_network_change(is_major);
             }
         }
     }
@@ -1820,214 +1375,35 @@ impl Actor {
     /// direct addresses from:
     ///
     /// - The portmapper.
-    /// - A net_report report.
+    /// - The public addresses the net report learned.
     /// - The local interfaces IP addresses.
     /// - User configured addresses.
+    ///
+    /// Runs whenever any of them changes.
     #[cfg(not(wasm_browser))]
-    fn update_direct_addresses(&mut self, net_report_report: Option<&net_report::Report>) {
-        // We only want to have one DirectAddr for each SocketAddr we have.  So we store
-        // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
-        // DirectAddr from each entry.
-        let mut addrs: BTreeMap<SocketAddr, (DirectAddrType, Option<Ipv6AddrFlags>)> =
-            BTreeMap::new();
-
-        // First add PortMapper provided addresses.
-        let portmap_watcher = self
-            .direct_addr_update_state
-            .port_mapper
-            .watch_external_address();
-        let maybe_port_mapped = *portmap_watcher.borrow();
-        if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            addrs
-                .entry(portmap_ext)
-                .or_insert((DirectAddrType::Portmapped, None));
-        }
-
-        // Next add STUN addresses from the net_report report.
-        if let Some(net_report_report) = net_report_report {
-            if let Some(global_v4) = net_report_report.global_v4 {
-                addrs
-                    .entry(global_v4.into())
-                    .or_insert((DirectAddrType::Qad, None));
-
-                // If they're behind a hard NAT and are using a fixed
-                // port locally, assume they might've added a static
-                // port mapping on their router to the same explicit
-                // port that we are running with. Worst case it's an invalid candidate mapping.
-                let port = self.sock.ip_bind_addrs().iter().find_map(|addr| {
-                    if addr.port() != 0 {
-                        Some(addr.port())
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(port) = port
-                    && net_report_report
-                        .mapping_varies_by_dest()
-                        .unwrap_or_default()
-                {
-                    let mut addr = global_v4;
-                    addr.set_port(port);
-                    addrs
-                        .entry(addr.into())
-                        .or_insert((DirectAddrType::Qad4LocalPort, None));
-                }
-            }
-            if let Some(global_v6) = net_report_report.global_v6 {
-                addrs
-                    .entry(global_v6.into())
-                    .or_insert((DirectAddrType::Qad, None));
-            }
-        }
-
-        self.collect_local_addresses(&mut addrs);
-
-        // Add configured external addresses.
-        for addr in self.sock.configured_addrs.read().expect("poisoned").iter() {
-            addrs.entry(*addr).or_insert((DirectAddrType::Config, None));
-        }
-
-        // Finally create and store store all these direct addresses
-        let stored_addrs = addrs
-            .into_iter()
-            .filter_map(|(addr, (typ, flags))| {
-                // Filter out deprecated IPs
-                let is_deprecated = flags.map(|f| f.deprecated).unwrap_or(false);
-                if is_deprecated {
-                    return None;
-                }
-                Some(DirectAddr { addr, typ })
-            })
-            .collect();
-        self.sock.store_direct_addresses(stored_addrs);
-    }
-
-    #[cfg(not(wasm_browser))]
-    fn collect_local_addresses(
-        &mut self,
-        addrs: &mut BTreeMap<SocketAddr, (DirectAddrType, Option<Ipv6AddrFlags>)>,
-    ) {
-        let netmon_state = self.local_interfaces_watcher.get();
-
-        // Matches the addresses that have been bound vs the requested ones.
-        let local_addrs: Vec<(SocketAddr, SocketAddr)> = self
+    fn update_direct_addresses(&mut self) {
+        let port_mapped = self.port_mapper.external_address();
+        let public = self.net_report.public_addrs();
+        let bound_local: Vec<_> = self
             .sock
             .ip_bind_addrs()
             .iter()
             .copied()
             .zip(self.sock.ip_local_addrs())
             .collect();
-
-        // Do we listen on any IPv4 unspecified address?
-        let has_ipv4_unspecified = local_addrs.iter().find_map(|(_, a)| {
-            if a.is_ipv4() && a.ip().is_unspecified() {
-                Some(a.port())
-            } else {
-                None
-            }
-        });
-        // Do we listen on any IPv6 unspecified address?
-        let has_ipv6_unspecified = local_addrs.iter().find_map(|(_, a)| {
-            if a.is_ipv6() && a.ip().is_unspecified() {
-                Some(a.port())
-            } else {
-                None
-            }
-        });
-
-        // If a socket is bound to the unspecified address, create SocketAddrs for
-        // each local IP address by pairing it with the port the socket is bound on.
-        if local_addrs
-            .iter()
-            .any(|(_, local)| local.ip().is_unspecified())
-        {
-            let LocalAddresses {
-                regular: mut ips,
-                loopback,
-            } = self.local_interfaces_watcher.get().local_addresses;
-            if ips.is_empty() && addrs.is_empty() {
-                // Include loopback addresses only if there are no other interfaces
-                // or public addresses, this allows testing offline.
-                ips = loopback;
-            }
-
-            for ip in ips {
-                let port_if_unspecified = match ip {
-                    IpAddr::V4(_) => has_ipv4_unspecified,
-                    IpAddr::V6(_) => has_ipv6_unspecified,
-                };
-                if let Some(port) = port_if_unspecified {
-                    let addr = SocketAddr::new(ip, port);
-                    let flags = find_flags(&netmon_state, ip);
-                    addrs.entry(addr).or_insert((DirectAddrType::Local, flags));
-                }
-            }
-        }
-
-        // If a socket is bound to a specific address, add it.
-        for (bound, local) in local_addrs {
-            if !bound.ip().is_unspecified() {
-                let flags = find_flags(&netmon_state, local.ip());
-                addrs.entry(local).or_insert((DirectAddrType::Local, flags));
-            }
-        }
-    }
-
-    fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
-        if let Some(ref mut r) = report {
-            self.sock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
-            if r.preferred_relay.is_none()
-                && let Some(my_relay) = self.sock.my_relay()
-            {
-                r.preferred_relay.replace(my_relay);
-            }
-
-            // Notify all transports
-            self.transports_network_change.on_network_change(r);
-        }
-
-        #[cfg(not(wasm_browser))]
-        self.update_direct_addresses(report.as_ref());
-    }
-}
-
-#[cfg(not(wasm_browser))]
-fn find_flags(state: &netmon::State, ip: IpAddr) -> Option<Ipv6AddrFlags> {
-    if ip.is_ipv6() {
-        state
-            .interfaces
-            .values()
-            .flat_map(|i| i.addrs())
-            .find_map(|addr| match addr {
-                IpNet::V4(_) => None,
-                IpNet::V6 { net, flags, .. } => {
-                    if net.addr() == ip {
-                        Some(flags)
-                    } else {
-                        None
-                    }
-                }
-            })
-    } else {
-        None
-    }
-}
-
-fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
-    // Pick a random duration between 20 and 26 seconds (just under 30s,
-    // a common UDP NAT timeout on Linux,etc)
-    let mut rng = rand::rng();
-    let d: Duration = rng.random_range(Duration::from_secs(20)..=Duration::from_secs(26));
-    if initial_delay {
-        debug!("scheduling periodic_stun to run in {}s", d.as_secs());
-        time::interval_at(time::Instant::now() + d, d)
-    } else {
-        debug!(
-            "scheduling periodic_stun to run immediately and in {}s",
-            d.as_secs()
+        let include_loopback = port_mapped.is_none() && public.v4.is_none() && public.v6.is_none();
+        let local = self
+            .net_report
+            .local_addresses(&bound_local, include_loopback);
+        let configured = self.sock.configured_addrs.read().expect("poisoned");
+        let addrs = direct_addrs::collect(
+            port_mapped,
+            public,
+            self.sock.ip_bind_addrs(),
+            local,
+            configured.iter().copied(),
         );
-        time::interval(d)
+        self.sock.store_direct_addresses(addrs);
     }
 }
 
