@@ -516,6 +516,13 @@ impl NetworkChangeSender {
         }
     }
 
+    /// Notifies the relay transports that the relay map was modified.
+    pub(crate) fn on_relay_map_change(&self) {
+        for relay in &self.relay {
+            relay.on_relay_map_change();
+        }
+    }
+
     /// Triggers an immediate relay connection health check after a network change.
     ///
     /// Uses RTT-based timeout for faster detection of broken connections.
