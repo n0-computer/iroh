@@ -18,6 +18,9 @@
 ## Change checklist
 
 - [ ] Self-review.
-- [ ] Documentation updates following the [style guide](https://rust-lang.github.io/rfcs/1574-more-api-documentation-conventions.html#appendix-a-full-conventions-text), if relevant.
+- [ ] Documentation updates following the [style guide], if relevant.
 - [ ] Tests if relevant.
 - [ ] All API changes documented.
+- [ ] `cargo make` passes locally.
+
+[style guide]: https://rust-lang.github.io/rfcs/1574-more-api-documentation-conventions.html#appendix-a-full-conventions-text
