@@ -2279,6 +2279,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
+ "tracing",
  "url",
  "zeroize",
 ]
@@ -2422,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "axum",
  "blake3",
