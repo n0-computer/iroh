@@ -9,7 +9,9 @@ use url::Url;
 /// It is cheaply clonable, as the underlying type is wrapped into an `Arc`.  The main type
 /// under the hood though is [`Url`].
 ///
-/// To create a [`RelayUrl`] use the `From<Url>` implementation.
+/// To create a [`RelayUrl`] use the `From<Url>` implementation.  It adds a trailing `/` to
+/// a path that lacks one, so the relay's own paths are joined under it: `https://example.com/prefix`
+/// becomes `https://example.com/prefix/`.  Deserialising goes through it too.
 ///
 /// It is encouraged to use a fully-qualified DNS domain name in the URL.  Meaning a DNS
 /// name which ends in a `.`, e.g, in `relay.example.com.`.  Otherwise the DNS resolution of
@@ -18,10 +20,16 @@ use url::Url;
 #[derive(
     Clone, derive_more::Display, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
+#[serde(from = "Url")]
 pub struct RelayUrl(Arc<Url>);
 
 impl From<Url> for RelayUrl {
-    fn from(url: Url) -> Self {
+    fn from(mut url: Url) -> Self {
+        if !url.cannot_be_a_base() && !url.path().ends_with('/') {
+            let path = format!("{}/", url.path());
+            url.set_path(&path);
+            tracing::info!(%url, "Added a trailing slash to the relay URL's path");
+        }
         Self(Arc::new(url))
     }
 }
@@ -112,5 +120,31 @@ mod tests {
 
         let url3 = RelayUrl::from(Url::parse("https://example.com/").unwrap());
         assert_eq!(url3.domain(), Some("example.com"));
+    }
+
+    #[test]
+    fn test_relay_url_path_trailing_slash() {
+        let url = RelayUrl::from(Url::parse("https://example.com/prefix").unwrap());
+        assert_eq!(url.as_str(), "https://example.com/prefix/");
+
+        let url: RelayUrl = "https://example.com/a/b?x=1".parse().unwrap();
+        assert_eq!(url.as_str(), "https://example.com/a/b/?x=1");
+
+        let url = RelayUrl::from(Url::parse("https://example.com/prefix/").unwrap());
+        assert_eq!(url.as_str(), "https://example.com/prefix/");
+
+        let url = RelayUrl::from(Url::parse("https://example.com").unwrap());
+        assert_eq!(url.as_str(), "https://example.com/");
+    }
+
+    #[test]
+    fn test_relay_url_deserialize_trailing_slash() {
+        let url: RelayUrl = serde_json::from_str(r#""https://example.com/prefix""#).unwrap();
+        assert_eq!(url.as_str(), "https://example.com/prefix/");
+
+        let url = RelayUrl::from(Url::parse("https://example.com/prefix/").unwrap());
+        let bytes = postcard::to_stdvec(&url).unwrap();
+        let back: RelayUrl = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(back, url);
     }
 }
