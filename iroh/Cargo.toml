@@ -74,7 +74,7 @@ axum = { version = "0.8", optional = true }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-portmapper = { version = "0.19.3", optional = true, default-features = false }
+portmapper = { version = "0.20.0", optional = true, default-features = false }
 noq = { version = "1.4.0", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
     "io-util",
