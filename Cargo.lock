@@ -420,11 +420,11 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "base64-url"
-version = "3.0.4"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "261c4eaab63106ddf34d377f47e5428aa863b61e4a647c872778d9caf8e2c819"
+checksum = "86f17aa8edc6110f0b2cc717fea9b1634a874c7169e900f098ab6f1fa65b31ca"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
 ]
 
 [[package]]
