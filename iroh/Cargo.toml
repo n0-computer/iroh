@@ -37,7 +37,7 @@ iroh-relay = { version = "1.4.1", path = "../iroh-relay", default-features = fal
 n0-future = "0.3"
 n0-error = "1.0.0"
 n0-watcher = "1.0.0"
-netwatch = "0.19.3"
+netwatch = "0.20.0"
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
