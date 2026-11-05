@@ -1383,6 +1383,32 @@ mod tests {
             .connect()
             .await?;
 
+        // Empty datagrams must pass through without disconnecting either client.
+        // The nonempty exchanges below also verify that both connections remain usable.
+        for segment_size in [None, std::num::NonZeroU16::new(1)] {
+            let msg = Datagrams {
+                ecn: None,
+                segment_size,
+                contents: bytes::Bytes::new(),
+            };
+            let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
+            assert_eq!(
+                res,
+                RelayToClientMsg::Datagrams {
+                    remote_endpoint_id: a_key,
+                    datagrams: msg.clone(),
+                }
+            );
+            let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
+            assert_eq!(
+                res,
+                RelayToClientMsg::Datagrams {
+                    remote_endpoint_id: b_key,
+                    datagrams: msg,
+                }
+            );
+        }
+
         info!("sending a -> b");
 
         // send message from a to b
