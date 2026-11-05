@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["AP_RELAY_HOSTNAME","EU_RELAY_HOSTNAME","NA_EAST_RELAY_HOSTNAME","NA_WEST_RELAY_HOSTNAME"],"fn":["default_ap_relay","default_eu_relay","default_na_east_relay","default_na_west_relay","default_relay_map"]};
