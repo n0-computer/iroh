@@ -77,30 +77,29 @@ the priority of a stream with pending data may only take effect after that data 
 transmitted. Using many different priority levels per connection may have a negative
 impact on performance.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.priority" class="method"><h4 class="code-header">pub fn <a href="#method.priority" class="fn">priority</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.i32.html">i32</a>, <a class="struct" href="struct.ClosedStream.html" title="struct iroh::endpoint::ClosedStream">ClosedStream</a>&gt;</h4></section></summary><div class="docblock"><p>Get the priority of the send stream</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_affinity" class="method"><h4 class="code-header">pub fn <a href="#method.set_affinity" class="fn">set_affinity</a>(
-    &amp;mut self,
-    affinity: StreamAffinity,
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="struct.ClosedStream.html" title="struct iroh::endpoint::ClosedStream">ClosedStream</a>&gt;</h4></section></summary><div class="docblock"><p>Sets a new affinity for this stream’s application data.</p>
-<p>Stream affinity allows to set the exact network path over which the STREAM frames
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_affinity" class="method"><h4 class="code-header">pub fn <a href="#method.set_affinity" class="fn">set_affinity</a>(&amp;self, affinity: StreamAffinity) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="struct.ClosedStream.html" title="struct iroh::endpoint::ClosedStream">ClosedStream</a>&gt;</h4></section></summary><div class="docblock"><p>Sets a new affinity for this stream’s application data.</p>
+<p>Stream affinity allows setting the exact network path over which the STREAM frames
 for a particular stream are sent. Setting the affinity to a path that can not carry
 any data will mean the stream’s data can not be transmitted. This is equivalent to
-setting the affinity to [<code>StreamAffinity::Block</code>].</p>
+setting the affinity to [<code>StreamAffinity::Block</code>]. It is up to the application to
+monitor for path changes and update a stream’s affinity if a
+[<code>StreamAffinity::Sticky</code>] path closes.</p>
 <p>Note that blocking stream frames from this API is not ideal: it uses up data from
 the connection-wide <a href="crate::TransportConfig::send_window">send window</a> before further writes to the stream are
-blocked. Therefor it should be used as a last resort only, it is better to not
+blocked. Therefore it should be used as a last resort only, it is better not to
 create a stream if no suitable network path exists. If the desired network path
 disappears before the entire stream is delivered consider using
 <a href="struct.SendStream.html#method.reset" title="method iroh::endpoint::SendStream::reset"><code>SendStream::reset</code></a> as an alternative to blocking the stream data.</p>
-<p>Packet scheduling affects all QUIC frames and not only application data. It
-functions entirely independent of stream affinity. It may decide to stop scheduling
-packets on a path depending on many circumstances, e.g. because of increased packet
-loss on a path, while the path might still be able to carry packets. When packet
-scheduling stops using a path <strong>no</strong> packets are sent on that path, regardless of
-what stream affinity indicates.</p>
+<p>Packet scheduling affects all QUIC frames, not only application data. It functions
+entirely independent of stream affinity. It may decide to stop scheduling packets on
+a path depending on many circumstances, e.g. because of increased packet loss on a
+path, while the path might still be able to carry packets. When packet scheduling
+stops using a path <strong>no</strong> packets are sent on that path, regardless of what stream
+affinity indicates.</p>
 <p>Setting stream affinity to be sticky to a path on which no packets are sent means no
 application data will be sent for the stream. The same caveats as above apply in
-this case. If a path becomes incapable to transmit packets entirely it will usually
-be closed after a short while.</p>
+this case. If a path becomes incapable of transmitting packets entirely it will
+usually be closed after a short while.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.stopped" class="method"><h4 class="code-header">pub fn <a href="#method.stopped" class="fn">stopped</a>(&amp;self) -&gt; Stopped</h4></section></summary><div class="docblock"><p>Completes when the peer stops the stream or reads the stream to completion</p>
 <p>Yields <code>Some</code> with the stop error code if the peer stops the stream. Yields <code>None</code> if the
 local side <a href="struct.SendStream.html#method.finish" title="method iroh::endpoint::SendStream::finish"><code>finish()</code></a>es the stream and then the peer acknowledges receipt
