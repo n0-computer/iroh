@@ -75,7 +75,6 @@ use crate::{
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig,
         biased_rtt_path_selector::BiasedRttPathSelector,
-        mapped_addrs::MappedAddr,
         remote_map::PathSelector,
         transports::{RelayConnectionFailure, RelayConnectionState},
     },
@@ -1165,7 +1164,12 @@ impl Endpoint {
                 .noq_endpoint()
                 .connect_with(client_config, dest_addr, server_name)?;
 
-        Ok(Connecting::new(connect, self.clone(), endpoint_id))
+        Ok(Connecting::new(
+            connect,
+            self.clone(),
+            endpoint_id,
+            mapped_addr,
+        ))
     }
 
     /// Accepts an incoming connection on the endpoint.
