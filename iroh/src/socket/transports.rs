@@ -1179,7 +1179,8 @@ impl noq::UdpSender for Sender {
 
         let network_path = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
-                let Some(endpoint_id) = self.sock.mapped_addrs.endpoint_addrs.lookup(&mapped_addr)
+                let Some((endpoint_id, finished)) =
+                    self.sock.mapped_addrs.endpoint_addrs.lookup(&mapped_addr)
                 else {
                     error!(dst = ?mapped_addr, "unknown NodeIdMappedAddr, dropped transmit");
                     return Poll::Ready(Ok(()));
@@ -1196,6 +1197,8 @@ impl noq::UdpSender for Sender {
                 match self.sock.try_send_remote_state_msg(
                     endpoint_id,
                     super::RemoteStateMessage::SendDatagram(
+                        mapped_addr,
+                        finished,
                         Box::new(self.sender.clone()),
                         OwnedTransmit::from(noq_transmit),
                     ),

@@ -32,7 +32,7 @@ pub(crate) use self::remote_state::{
 use super::{
     DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{
-        AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MappedAddr, MultipathMappedAddr,
+        AddrMap, ConnectingAddrMap, CustomMappedAddr, MappedAddr, MultipathMappedAddr,
         RelayMappedAddr,
     },
     transports,
@@ -73,8 +73,8 @@ pub(crate) struct RemoteMap {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MappedAddrs {
-    /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
-    pub(super) endpoint_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
+    /// Mapped addresses for individual outgoing handshakes.
+    pub(super) endpoint_addrs: ConnectingAddrMap,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     pub(super) relay_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
@@ -373,8 +373,6 @@ impl Tasks {
         initial_msgs: Vec<RemoteStateMessage>,
         mapped_addrs: &MappedAddrs,
     ) -> mpsc::Sender<RemoteStateMessage> {
-        // Ensure there is a RemoteMappedAddr for this EndpointId.
-        mapped_addrs.endpoint_addrs.get(&eid);
         let sender = RemoteStateActor::new(
             eid,
             self.local_direct_addrs.clone(),
@@ -554,6 +552,8 @@ mod tests {
                 .send_to_actor(
                     endpoint_id,
                     RemoteStateMessage::SendDatagram(
+                        super::super::mapped_addrs::EndpointIdMappedAddr::generate(),
+                        CancellationToken::new(),
                         Box::new(sender.clone()),
                         OwnedTransmit {
                             ecn: None,
