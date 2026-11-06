@@ -6,27 +6,34 @@ use super::{
     HANDSHAKE_FALLBACK_DELAY, MAX_DATAGRAM_SEND_TASKS, OwnedTransmit, RemoteStateActor, Source,
     State, TransportsSender, transports,
 };
+use crate::SecretKey;
+#[cfg(feature = "unstable-custom-transports")]
 use crate::{
-    Endpoint, EndpointAddr, SecretKey, TransportAddr,
+    Endpoint, EndpointAddr, TransportAddr,
     endpoint::presets,
     test_utils::test_transport::{TestNetwork, to_custom_addr},
 };
 
+#[cfg(feature = "unstable-custom-transports")]
 const ALPN: &[u8] = b"restart-handshake-test";
 
+#[cfg(feature = "unstable-custom-transports")]
 #[tokio::test]
 async fn new_handshake_reaches_restarted_peer_with_old_connection_open() {
     restarted_peer(false).await;
 }
 
+#[cfg(feature = "unstable-custom-transports")]
 #[tokio::test]
 async fn new_handshake_looks_up_restarted_peer_with_old_connection_open() {
     restarted_peer(true).await;
 }
 
+#[cfg(feature = "unstable-custom-transports")]
 #[derive(Debug)]
 struct RestartLookup(EndpointAddr);
 
+#[cfg(feature = "unstable-custom-transports")]
 impl crate::address_lookup::AddressLookup for RestartLookup {
     fn resolve(
         &self,
@@ -50,6 +57,7 @@ impl crate::address_lookup::AddressLookup for RestartLookup {
     }
 }
 
+#[cfg(feature = "unstable-custom-transports")]
 async fn restarted_peer(use_lookup: bool) {
     let network = TestNetwork::new();
     let host_key = SecretKey::generate();
@@ -276,6 +284,7 @@ async fn completing_one_handshake_does_not_cancel_another_handshakes_lookup() {
     assert!(state.address_lookup_stream.is_none());
 }
 
+#[cfg(feature = "unstable-custom-transports")]
 #[tokio::test]
 async fn attempt_tracking_preserves_zero_rtt_with_another_connection_open() {
     use crate::endpoint::{ConnectOptions, ZeroRttStatus};
