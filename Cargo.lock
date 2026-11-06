@@ -3189,7 +3189,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "1.5.0"
-source = "git+https://github.com/n0-computer/noq?branch=flub%2Fstream-affinity-simple#311f6b7b52442c4fb52965009f486352d71bac67"
+source = "git+https://github.com/n0-computer/noq?branch=flub%2Fstream-affinity-simple#a5d970d67ae120ffc7e749517be394192a5d1412"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3210,7 +3210,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.5.0"
-source = "git+https://github.com/n0-computer/noq?branch=flub%2Fstream-affinity-simple#311f6b7b52442c4fb52965009f486352d71bac67"
+source = "git+https://github.com/n0-computer/noq?branch=flub%2Fstream-affinity-simple#a5d970d67ae120ffc7e749517be394192a5d1412"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3240,7 +3240,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.5.0"
-source = "git+https://github.com/n0-computer/noq?branch=flub%2Fstream-affinity-simple#311f6b7b52442c4fb52965009f486352d71bac67"
+source = "git+https://github.com/n0-computer/noq?branch=flub%2Fstream-affinity-simple#a5d970d67ae120ffc7e749517be394192a5d1412"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -4931,7 +4931,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
