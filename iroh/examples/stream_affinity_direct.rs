@@ -50,10 +50,12 @@ async fn main() -> Result<()> {
         .bind()
         .await?;
 
-    alice.online().await;
+    // Wait for bob to come online, dial by his relay URL.
     bob.online().await;
+    let mut bob_addr = bob.addr();
+    bob_addr.addrs.retain(|addr| addr.is_relay());
 
-    let (alice_conn, bob_conn) = tokio::join!(alice.connect(bob.id(), ALPN), async {
+    let (alice_conn, bob_conn) = tokio::join!(alice.connect(bob_addr, ALPN), async {
         bob.accept()
             .await
             .ok_or_else(|| anyerr!("bob's endpoint closed"))?
