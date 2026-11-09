@@ -67,8 +67,7 @@ async fn main() -> Result<()> {
         },
     )?;
 
-    let bob_addr = bob.addr();
-    let (alice_conn, bob_conn) = tokio::join!(alice.connect(bob_addr, ALPN), async {
+    let (alice_conn, bob_conn) = tokio::join!(alice.connect(bob.id(), ALPN), async {
         bob.accept()
             .await
             .ok_or_else(|| anyerr!("bob's endpoint closed"))?
