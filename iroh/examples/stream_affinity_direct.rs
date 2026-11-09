@@ -31,7 +31,7 @@ use iroh::{
     endpoint::{Connection, ConnectionError, PathList, presets},
 };
 use n0_error::{Result, StdResultExt, anyerr, ensure_any};
-use n0_future::StreamExt;
+use n0_future::{StreamExt, task::AbortOnDropHandle};
 use noq::StreamAffinity;
 
 const ALPN: &[u8] = b"iroh-example/stream-affinity-direct/0";
@@ -95,6 +95,7 @@ async fn run_bob(conn: Connection) -> Result<()> {
     let mut recv = conn.accept_uni().await.anyerr()?;
     let received = recv.read_to_end(DATA_SIZE).await.anyerr()?;
     ensure_any!(received.len() == DATA_SIZE, "data stream truncated");
+    println!("bob: all data read");
     conn.close(0u32.into(), b"all data read");
     n0_error::Ok(())
 }
@@ -128,21 +129,21 @@ async fn run_alice(conn: Connection) -> Result<()> {
         .set_affinity(StreamAffinity::Sticky(direct_path))
         .anyerr()?;
 
-    // Time to send the data, but watch for path changes in case we need to stop sending the
-    // data.
-
-    // Fill the first chunk of pending data.
-    let mut chunks = [Bytes::from(vec![0xda; CHUNK_SIZE])];
-    let mut remaining_data = DATA_SIZE - CHUNK_SIZE;
-    loop {
-        let mut bufs = chunks.as_mut_slice();
-        tokio::select! {
-            biased;
-            paths = paths_watcher.next() => {
-                // Paths have changed, check if our sticky path still exists, otherwise try
-                // to find a new direct path.
-                let paths = paths.ok_or(anyerr!("path watcher lost"))?;
+    // Spawn a task to watch the paths and update the pin as needed. The task is aborted
+    // once it is out of scope, so no need to manage it further. We do not know that bob
+    // received all the data until it is signalled by closing the connection, that is the
+    // protocol agreement. So we can not stop this task before we get this signal as before
+    // that we might still need to retransmit data even though we already called
+    // SendStream::finish.
+    let _watcher = AbortOnDropHandle::new(tokio::spawn({
+        let conn = conn.clone();
+        let send_stream = send_stream.clone();
+        async move {
+            let mut paths_watcher = conn.paths_stream();
+            while let Some(paths) = paths_watcher.next().await {
                 print_open_paths(&paths);
+                // Only change the pinned path if the currently used path is no longer
+                // available.
                 if paths.iter().find(|p| p.id() == direct_path).is_none() {
                     if let Some(path) = paths.iter().find(|p| p.is_ip()) {
                         println!("pinning the stream to direct path {}", path.id());
@@ -155,27 +156,17 @@ async fn run_alice(conn: Connection) -> Result<()> {
                     }
                 }
             }
-            // SendStream::write_many_chunks is cancel-safe: bufs will contain anything that
-            // is not yet written.
-            res = send_stream.write_many_chunks(&mut bufs) => {
-                // Make sure a write error propagates out.
-                res.anyerr()?;
-            }
+            Err::<(), _>(anyerr!("path watcher stopped"))
         }
+    }));
 
-        if bufs.is_empty() && remaining_data == 0 {
-            // All data is written.
-            break;
-        }
-
-        // If the chunk was entirely written we need to refill the chunk. Otherwise the
-        // Bytes in the chunks has been shrunk to only contain the still pending data.
-        if bufs.is_empty() {
-            chunks[0] = Bytes::from(vec![0xda; CHUNK_SIZE]);
-            remaining_data -= CHUNK_SIZE;
-        }
+    // Send the data, this will stall when the paths watcher blocks the stream.
+    for _ in 0..DATA_SIZE / CHUNK_SIZE {
+        send_stream
+            .write_chunk(Bytes::from(vec![0xda; CHUNK_SIZE]))
+            .await
+            .anyerr()?;
     }
-
     send_stream.finish().anyerr()?;
 
     // Wait for blob to close the connection once all data was read.
