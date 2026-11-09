@@ -44,9 +44,6 @@ const CHUNK_SIZE: usize = 64 * 1024;
 /// How long to wait for the endpoints to come online.
 const ONLINE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How long to wait for a verified direct path and the relay path.
-const PATHS_TIMEOUT: Duration = Duration::from_secs(10);
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -108,19 +105,15 @@ async fn run_alice(conn: Connection) -> Result<()> {
     // affinity to blocked before we have a direct path we will already be consuming
     // connection-wide send window capacity for a stream that can not send anyway. So we
     // prefer to delay opening the stream.
-    let direct_path = tokio::time::timeout(PATHS_TIMEOUT, async {
-        loop {
-            let Some(paths) = paths_watcher.next().await else {
-                break Err(anyerr!("path watcher stopped"));
-            };
-            print_open_paths(&paths);
-            if let Some(direct) = paths.iter().find(|p| p.is_ip()) {
-                break Ok(direct.id());
-            }
+    let direct_path = loop {
+        let Some(paths) = paths_watcher.next().await else {
+            return Err(anyerr!("path watcher stopped"));
+        };
+        print_open_paths(&paths);
+        if let Some(direct) = paths.iter().find(|p| p.is_ip()) {
+            break direct.id();
         }
-    })
-    .await
-    .map_err(|_| anyerr!("direct path not open within {PATHS_TIMEOUT:?}"))??;
+    };
 
     // Create a SendStream and pin it to the a direct path.
     println!("pinning the stream to direct path {direct_path}");
