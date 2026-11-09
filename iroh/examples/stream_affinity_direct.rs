@@ -23,7 +23,6 @@
 //!     cargo run --example stream_affinity_direct
 //!
 //! [`Connection::paths`]: iroh::endpoint::Connection::paths
-use std::time::Duration;
 
 use bytes::Bytes;
 use iroh::{
@@ -41,9 +40,6 @@ const DATA_SIZE: usize = 1024 * 1024;
 /// Size of each chunk Alice hands to the actor.
 const CHUNK_SIZE: usize = 64 * 1024;
 
-/// How long to wait for the endpoints to come online.
-const ONLINE_TIMEOUT: Duration = Duration::from_secs(5);
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -54,18 +50,8 @@ async fn main() -> Result<()> {
         .bind()
         .await?;
 
-    tokio::try_join!(
-        async {
-            tokio::time::timeout(ONLINE_TIMEOUT, alice.online())
-                .await
-                .map_err(|_| anyerr!("alice did not come online within {ONLINE_TIMEOUT:?}"))
-        },
-        async {
-            tokio::time::timeout(ONLINE_TIMEOUT, bob.online())
-                .await
-                .map_err(|_| anyerr!("bob did not come online within {ONLINE_TIMEOUT:?}"))
-        },
-    )?;
+    alice.online().await;
+    bob.online().await;
 
     let (alice_conn, bob_conn) = tokio::join!(alice.connect(bob.id(), ALPN), async {
         bob.accept()
