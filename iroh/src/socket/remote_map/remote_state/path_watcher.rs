@@ -31,7 +31,6 @@ use std::{
 
 use iroh_base::TransportAddr;
 use n0_future::{StreamExt, time::Duration};
-use n0_watcher::Disconnected;
 use noq::WeakPathHandle;
 use noq_proto::PathId;
 use smallvec::SmallVec;
@@ -520,15 +519,13 @@ impl<'conn> PathListStream<'conn> {
     ///
     /// Checks the current paths first. The returned path borrows this stream.
     ///
+    /// Returns `None` if the stream ends before a match.
+    ///
     /// This method is cancellation safe.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Disconnected`] if the stream ends before a match.
     pub async fn wait_any(
         &mut self,
         mut predicate: impl FnMut(&Path<'_>) -> bool,
-    ) -> Result<Path<'_>, Disconnected> {
+    ) -> Option<Path<'_>> {
         self.first_poll = true;
         while let Some(paths) = self.next().await {
             let id = paths
@@ -536,36 +533,32 @@ impl<'conn> PathListStream<'conn> {
                 .find(|path| predicate(path))
                 .map(|path| path.id());
             if let Some(id) = id {
-                return Ok(self
-                    .snapshot
-                    .insert(paths)
-                    .get(id)
-                    .expect("matched path exists"));
+                return Some(
+                    self.snapshot
+                        .insert(paths)
+                        .get(id)
+                        .expect("matched path exists"),
+                );
             }
         }
-        Err(Disconnected)
+        None
     }
 
     /// Waits until no open path matches `predicate`.
     ///
     /// Checks the current paths first. An empty snapshot satisfies the condition.
     ///
+    /// Returns `None` if the stream ends before the condition is met.
+    ///
     /// This method is cancellation safe.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Disconnected`] if the stream ends before the condition is met.
-    pub async fn wait_none(
-        &mut self,
-        mut predicate: impl FnMut(&Path<'_>) -> bool,
-    ) -> Result<(), Disconnected> {
+    pub async fn wait_none(&mut self, mut predicate: impl FnMut(&Path<'_>) -> bool) -> Option<()> {
         self.first_poll = true;
         while let Some(paths) = self.next().await {
             if !paths.iter().any(|path| predicate(&path)) {
-                return Ok(());
+                return Some(());
             }
         }
-        Err(Disconnected)
+        None
     }
 }
 

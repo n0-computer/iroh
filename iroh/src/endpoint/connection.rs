@@ -1659,15 +1659,19 @@ mod tests {
 
         // Recheck current state after ordinary polling and cancelled waits.
         let direct = now_or_never(paths_client.wait_any(|path| path.is_ip()))
-            .expect("existing path is immediately available")?;
+            .expect("existing path is immediately available")
+            .context("path stream ended")?;
         assert!(direct.is_ip());
         let direct_id = direct.id();
         assert!(now_or_never(paths_client.wait_none(|path| path.id() == direct_id)).is_none());
         assert!(now_or_never(paths_client.wait_any(|_| false)).is_none());
-        now_or_never(paths_client.wait_none(|_| false))
-            .expect("no matching paths is immediately ready")?;
+        assert_eq!(
+            now_or_never(paths_client.wait_none(|_| false)),
+            Some(Some(()))
+        );
         let same = now_or_never(paths_client.wait_any(|path| path.id() == direct_id))
-            .expect("existing path is immediately available")?;
+            .expect("existing path is immediately available")
+            .context("path stream ended")?;
         assert_eq!(direct_id, same.id());
 
         // A pending wait wakes when its matching path disappears.
@@ -1683,7 +1687,8 @@ mod tests {
                 .anyerr()?;
             tokio::time::timeout(Duration::from_secs(10), wait)
                 .await
-                .expect("wait_none did not wake after closing the path")?;
+                .expect("wait_none did not wake after closing the path")
+                .context("path stream ended")?;
         }
         assert!(conn_client.paths().get(direct_id).is_none());
         assert!(conn_client.close_reason().is_none());
@@ -1706,12 +1711,12 @@ mod tests {
 
         assert!(matches!(
             now_or_never(paths_client.wait_any(|_| true)),
-            Some(Err(n0_watcher::Disconnected))
+            Some(None)
         ));
-        // Connection closure is an error, not an empty snapshot.
+        // Connection closure does not satisfy the condition.
         assert!(matches!(
             now_or_never(paths_client.wait_none(|_| false)),
-            Some(Err(n0_watcher::Disconnected))
+            Some(None)
         ));
 
         server.close().await;

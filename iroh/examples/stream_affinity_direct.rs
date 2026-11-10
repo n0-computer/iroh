@@ -29,7 +29,7 @@ use iroh::{
     Endpoint,
     endpoint::{Connection, ConnectionError, presets},
 };
-use n0_error::{Result, StdResultExt, anyerr, ensure_any};
+use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::task::AbortOnDropHandle;
 use noq::StreamAffinity;
 use tokio_stream::StreamExt;
@@ -94,7 +94,11 @@ async fn run_alice(conn: Connection) -> Result<()> {
     // affinity to blocked before we have a direct path we will already be consuming
     // connection-wide send window capacity for a stream that can not send anyway. So we
     // prefer to delay opening the stream.
-    let direct_path = paths_watcher.wait_any(|p| p.is_ip()).await?.id();
+    let direct_path = paths_watcher
+        .wait_any(|p| p.is_ip())
+        .await
+        .context("path stream ended")?
+        .id();
 
     // Create a SendStream and make it stick to a direct path.
     println!("stream sticks to direct path {direct_path}");
@@ -118,10 +122,17 @@ async fn run_alice(conn: Connection) -> Result<()> {
             loop {
                 // Only change the sticky path if the currently used path is no longer
                 // available.
-                paths_watcher.wait_none(|p| p.id() == direct_path).await?;
+                paths_watcher
+                    .wait_none(|p| p.id() == direct_path)
+                    .await
+                    .context("path stream ended")?;
                 println!("no direct path left, blocking the stream");
                 send_stream.set_affinity(StreamAffinity::Block).anyerr()?;
-                direct_path = paths_watcher.wait_any(|p| p.is_ip()).await?.id();
+                direct_path = paths_watcher
+                    .wait_any(|p| p.is_ip())
+                    .await
+                    .context("path stream ended")?
+                    .id();
                 println!("stream sticks to direct path {direct_path}");
                 send_stream
                     .set_affinity(StreamAffinity::Sticky(direct_path))

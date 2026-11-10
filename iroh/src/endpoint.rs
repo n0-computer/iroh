@@ -2083,7 +2083,7 @@ mod tests {
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use iroh_dns::endpoint_info::UserData;
     use iroh_relay::{RelayConfig, RelayQuicConfig, server::Access, tls::CaTlsConfig};
-    use n0_error::{AnyError as Error, Result, StdResultExt};
+    use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, future::now_or_never, stream, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
@@ -2528,7 +2528,10 @@ mod tests {
             send.write_all(b"hello").await.anyerr()?;
             let mut paths = conn.paths_stream();
             info!("Waiting for direct connection");
-            paths.wait_any(|path| path.is_ip()).await?;
+            paths
+                .wait_any(|path| path.is_ip())
+                .await
+                .context("path stream ended")?;
             info!("Have direct connection");
             #[cfg(feature = "metrics")]
             {
@@ -2633,7 +2636,8 @@ mod tests {
                     assert!(!path.is_ip(), "unexpected IP path: {path:?}");
                     path.is_relay()
                 })
-                .await?;
+                .await
+                .context("path stream ended")?;
             info!("Have relay connection");
 
             send.write_all(b"close please").await.anyerr()?;
@@ -2733,7 +2737,8 @@ mod tests {
                 paths.wait_any(|path| path.is_relay()),
             )
             .await
-            .anyerr()??;
+            .anyerr()?
+            .context("path stream ended")?;
             info!("client has a relay path");
 
             // wait for the server to signal it has the relay connection
@@ -2776,7 +2781,8 @@ mod tests {
                 paths.wait_any(|path| path.is_relay()),
             )
             .await
-            .anyerr()??;
+            .anyerr()?
+            .context("path stream ended")?;
             info!("server has a relay path");
 
             let mut stream = conn.open_uni().await.anyerr()?;
