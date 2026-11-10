@@ -260,7 +260,7 @@ impl QuicTransportConfigBuilder {
     /// Disabling fairness can reduce fragmentation and protocol overhead for workloads that use
     /// many small streams.
     #[deprecated(
-        note = "Send fairness is now always enabled. Neither enabling nor disabling it has no effect."
+        note = "Send fairness is now always enabled. Neither enabling nor disabling it has an effect."
     )]
     pub fn send_fairness(mut self, value: bool) -> Self {
         #[allow(deprecated)]

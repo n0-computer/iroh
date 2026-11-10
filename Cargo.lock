@@ -2227,7 +2227,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "assert_matches",
  "axum",
@@ -2318,7 +2318,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bench"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "bytes",
  "clap",
@@ -3174,7 +3174,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "1.5.0"
-source = "git+https://github.com/n0-computer/noq?branch=flub%2Fstream-affinity-simple#d61b1f1e5fa9a28bc2f079b40a68a534757edb7e"
+source = "git+https://github.com/n0-computer/noq?branch=main#2f3ba68ab18329697a5c4b8330ff1e93fa1b78ce"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -3195,7 +3195,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.5.0"
-source = "git+https://github.com/n0-computer/noq?branch=flub%2Fstream-affinity-simple#d61b1f1e5fa9a28bc2f079b40a68a534757edb7e"
+source = "git+https://github.com/n0-computer/noq?branch=main#2f3ba68ab18329697a5c4b8330ff1e93fa1b78ce"
 dependencies = [
  "aes-gcm",
  "aws-lc-rs",
@@ -3225,7 +3225,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.5.0"
-source = "git+https://github.com/n0-computer/noq?branch=flub%2Fstream-affinity-simple#d61b1f1e5fa9a28bc2f079b40a68a534757edb7e"
+source = "git+https://github.com/n0-computer/noq?branch=main#2f3ba68ab18329697a5c4b8330ff1e93fa1b78ce"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -4869,7 +4869,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
