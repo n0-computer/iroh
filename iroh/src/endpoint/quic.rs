@@ -10,7 +10,7 @@
 use std::path::Path;
 use std::{sync::Arc, time::Duration};
 
-/// `noq` types that are used in the public iroh API.
+// `noq` types that are used in the public iroh API.
 // Each type is notated with the iroh type or noq type that uses it.
 pub use noq::{
     AcceptBi,             // iroh::endpoint::Connection
@@ -259,7 +259,11 @@ impl QuicTransportConfigBuilder {
     ///
     /// Disabling fairness can reduce fragmentation and protocol overhead for workloads that use
     /// many small streams.
+    #[deprecated(
+        note = "Send fairness is now always enabled. Neither enabling nor disabling it has an effect."
+    )]
     pub fn send_fairness(mut self, value: bool) -> Self {
+        #[allow(deprecated)]
         self.0.send_fairness(value);
         self
     }
