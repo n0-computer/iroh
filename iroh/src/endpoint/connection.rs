@@ -1367,7 +1367,7 @@ mod tests {
     use iroh_base::{EndpointAddr, SecretKey};
     use iroh_relay::tls::CaTlsConfig;
     use n0_error::{Result, StackResultExt, StdResultExt};
-    use n0_future::{Stream, StreamExt};
+    use n0_future::{Stream, StreamExt, future::now_or_never};
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
     use tracing::{Instrument, error_span, info, info_span, trace_span};
@@ -1658,33 +1658,35 @@ mod tests {
         );
 
         // Recheck current state after ordinary polling and cancelled waits.
-        let direct = tokio::time::timeout(
-            Duration::from_secs(1),
-            paths_client.wait_any(|path| path.is_ip()),
-        )
-        .await
-        .anyerr()??;
+        let direct = now_or_never(paths_client.wait_any(|path| path.is_ip()))
+            .expect("existing path is immediately available")?;
         assert!(direct.is_ip());
-        // Copy the ID before mutably borrowing the stream for another wait.
         let direct_id = direct.id();
-        assert!(
-            n0_future::future::now_or_never(paths_client.wait_none(|path| path.id() == direct_id))
-                .is_none()
-        );
-        assert!(n0_future::future::now_or_never(paths_client.wait_any(|_| false)).is_none());
-        n0_future::future::now_or_never(paths_client.wait_none(|_| false))
+        assert!(now_or_never(paths_client.wait_none(|path| path.id() == direct_id)).is_none());
+        assert!(now_or_never(paths_client.wait_any(|_| false)).is_none());
+        now_or_never(paths_client.wait_none(|_| false))
             .expect("no matching paths is immediately ready")?;
-        let same =
-            n0_future::future::now_or_never(paths_client.wait_any(|path| path.id() == direct_id))
-                .expect("existing path is immediately available")?;
+        let same = now_or_never(paths_client.wait_any(|path| path.id() == direct_id))
+            .expect("existing path is immediately available")?;
         assert_eq!(direct_id, same.id());
-        // A temporary stream can be used when extracting an owned value immediately.
-        let from_temporary = conn_client
-            .paths_stream()
-            .wait_any(|path| path.is_ip())
-            .await?
-            .id();
-        assert_eq!(from_temporary, direct_id);
+
+        // A pending wait wakes when its matching path disappears.
+        {
+            let wait = paths_client.wait_none(|path| path.id() == direct_id);
+            tokio::pin!(wait);
+            assert!(now_or_never(wait.as_mut()).is_none());
+            conn_client
+                .inner
+                .path(direct_id)
+                .expect("direct path is open")
+                .close()
+                .anyerr()?;
+            tokio::time::timeout(Duration::from_secs(10), wait)
+                .await
+                .expect("wait_none did not wake after closing the path")?;
+        }
+        assert!(conn_client.paths().get(direct_id).is_none());
+        assert!(conn_client.close_reason().is_none());
 
         // Close the client connection.
         info!("close client conn");
@@ -1703,13 +1705,13 @@ mod tests {
         .expect("server paths watcher did not close within 8s of connection close");
 
         assert!(matches!(
-            paths_client.wait_any(|_| true).await,
-            Err(n0_watcher::Disconnected)
+            now_or_never(paths_client.wait_any(|_| true)),
+            Some(Err(n0_watcher::Disconnected))
         ));
         // Connection closure is an error, not an empty snapshot.
         assert!(matches!(
-            paths_client.wait_none(|_| false).await,
-            Err(n0_watcher::Disconnected)
+            now_or_never(paths_client.wait_none(|_| false)),
+            Some(Err(n0_watcher::Disconnected))
         ));
 
         server.close().await;
