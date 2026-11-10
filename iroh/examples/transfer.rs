@@ -52,7 +52,8 @@ use iroh::{
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
-use n0_future::StreamExt;
+use n0_future::{StreamExt, task::AbortOnDropHandle};
+use noq::StreamAffinity;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::{
@@ -234,11 +235,13 @@ impl Length {
 #[derive(Debug, Serialize, Clone, Copy)]
 enum RequestKind {
     Upload,
+    UploadStickyToDirect,
     Download,
 }
 
 #[derive(Serialize, Deserialize, MaxSize, Debug, Clone)]
 enum Request {
+    // TODO: allow download requests with affinity
     Download(Length),
     Upload,
 }
@@ -379,6 +382,9 @@ enum Commands {
         remote_direct_address: Vec<SocketAddr>,
         #[clap(flatten)]
         endpoint_args: EndpointArgs,
+        /// Only transfer over the direct (IP) transport.
+        #[clap(long)]
+        sticky_to_direct: bool,
     },
 }
 
@@ -450,6 +456,7 @@ async fn run_command(command: Commands, endpoint: &Endpoint, output: Output) -> 
             mode,
             size,
             duration,
+            sticky_to_direct,
         } => {
             let length = match (size, duration) {
                 (Some(size), None) => Length::Size(size),
@@ -462,7 +469,12 @@ async fn run_command(command: Commands, endpoint: &Endpoint, output: Output) -> 
                 .map(TransportAddr::Relay)
                 .chain(remote_direct_address.into_iter().map(TransportAddr::Ip));
             let remote_addr = EndpointAddr::from_parts(remote_id, addrs);
-            fetch(endpoint, remote_addr, length, mode, output).await?
+            let affinity = if sticky_to_direct {
+                AffinityMode::StickyToDirect
+            } else {
+                AffinityMode::Any
+            };
+            fetch(endpoint, remote_addr, length, mode, affinity, output).await?
         }
     }
     Ok(())
@@ -663,14 +675,15 @@ async fn handle_connection(conn: Connection, output: Output) {
             Ok(streams) => streams,
             Err(err) => break err,
         };
-        tokio::spawn(
+        tokio::spawn({
+            let conn = conn.clone();
             async move {
-                if let Err(err) = handle_request(remote_id, send, recv, output).await {
+                if let Err(err) = handle_request(remote_id, conn, send, recv, output).await {
                     warn!("[{}] Request failed: {err:#}", remote_id.fmt_short());
                 }
             }
-            .instrument(Span::current()),
-        );
+            .instrument(Span::current())
+        });
     };
 
     let is_graceful = matches!(
@@ -689,9 +702,11 @@ async fn handle_connection(conn: Connection, output: Output) {
     stats_task.await.expect("stats task panicked");
 }
 
+/// Handles a single request made in the provider mode.
 #[instrument("handle", skip_all, fields(id=send.id().index()))]
 async fn handle_request(
     remote_id: EndpointId,
+    conn: Connection,
     send: SendStream,
     mut recv: RecvStream,
     output: Output,
@@ -700,9 +715,10 @@ async fn handle_request(
         .await
         .context("failed to read request")?;
     output.emit_with_remote(remote_id, HandleRequest { request: &request });
+    // TODO: allow download requests with affinity
     match request {
         Request::Download(length) => {
-            let stats = send_data(send, recv, length).await?;
+            let stats = send_data(conn, AffinityMode::Any, send, recv, length, output).await?;
             output.emit_with_remote(remote_id, UploadComplete { stats });
         }
         Request::Upload => {
@@ -718,6 +734,7 @@ async fn fetch(
     remote_addr: EndpointAddr,
     length: Length,
     mode: Mode,
+    affinity: AffinityMode,
     output: Output,
 ) -> Result<()> {
     // Attempt to connect, over the given ALPN. Returns a connection.
@@ -733,18 +750,20 @@ async fn fetch(
 
     output.emit(StartRequest { mode, length });
     // Perform requests depending on the request mode.
+    let upload_req = match affinity {
+        AffinityMode::StickyToDirect => RequestKind::UploadStickyToDirect,
+        AffinityMode::Any => RequestKind::Upload,
+    };
     let request_fut = async {
         match mode {
-            Mode::Upload => {
-                perform_request(&conn, RequestKind::Upload, length, start, output).await?
-            }
+            Mode::Upload => perform_request(&conn, upload_req, length, start, output).await?,
             Mode::Download => {
                 perform_request(&conn, RequestKind::Download, length, start, output).await?
             }
             Mode::Bidi => {
                 tokio::try_join!(
                     perform_request(&conn, RequestKind::Download, length, start, output),
-                    perform_request(&conn, RequestKind::Upload, length, start, output),
+                    perform_request(&conn, upload_req, length, start, output),
                 )?;
             }
             Mode::Ping => {
@@ -812,7 +831,23 @@ async fn perform_request(
         }
         RequestKind::Upload => {
             Request::Upload.write(&mut send).await?;
-            let stats = send_data(send, recv, length).await?;
+            let stats =
+                send_data(conn.clone(), AffinityMode::Any, send, recv, length, output).await?;
+            output.emit(UploadComplete { stats });
+        }
+        RequestKind::UploadStickyToDirect => {
+            // This is a header. We allow to write this via any path so do not yet apply
+            // stream affinity.
+            Request::Upload.write(&mut send).await?;
+            let stats = send_data(
+                conn.clone(),
+                AffinityMode::StickyToDirect,
+                send,
+                recv,
+                length,
+                output,
+            )
+            .await?;
             output.emit(UploadComplete { stats });
         }
     }
@@ -861,18 +896,29 @@ async fn drain_stream(
 
 /// Send data on `send` for `length`, afterwards wait for `recv` to be closed.
 ///
-/// When done sending, we wait for [`RecvStream`] to be closed. The remote will finish its corresponding
-/// send stream once it has read all our data. This ensures that we don't close the connection before the remote
-/// has fully read our data.
+/// When done sending, we wait for [`RecvStream`] to be closed. The remote will finish its
+/// corresponding send stream once it has read all our data. This ensures that we don't
+/// close the connection before the remote has fully read our data.
 #[instrument("send_data", skip_all)]
 async fn send_data(
+    conn: Connection,
+    affinity: AffinityMode,
     mut send: SendStream,
     mut recv: RecvStream,
     length: Length,
+    output: Output,
 ) -> Result<UploadStats> {
     debug!(?length, "start");
     const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let data = Bytes::from_static(DATA);
+
+    let _watcher_task = match affinity {
+        AffinityMode::Any => None,
+        AffinityMode::StickyToDirect => {
+            let task = affinity_paths_watcher(conn, send.clone(), output).await?;
+            Some(task)
+        }
+    };
 
     let start = Instant::now();
     let mut total = 0;
@@ -901,6 +947,60 @@ async fn send_data(
     };
     debug!(?stats, "done");
     Ok(stats)
+}
+
+/// Creates watcher that sets the stream affinity and keeps it updated.
+///
+/// The affinity is set to be sticky to a direct path, as that is the only affinity
+/// supported right now.
+///
+/// Blocks while the initial affinity is not available.
+async fn affinity_paths_watcher(
+    conn: Connection,
+    stream: SendStream,
+    output: Output,
+) -> Result<AbortOnDropHandle<Result<()>>> {
+    let mut watcher = conn.paths_stream();
+    let sticky_path = loop {
+        let paths = watcher.next().await.ok_or(anyerr!("watcher stopped"))?;
+        if let Some(p) = paths.iter().find(|p| p.is_ip()) {
+            output.emit(format!(
+                "sending sticky on path {} ({})",
+                p.id(),
+                p.remote_addr()
+            ));
+            break p.id();
+        }
+    };
+    drop(watcher);
+    stream
+        .set_affinity(StreamAffinity::Sticky(sticky_path))
+        .anyerr()?;
+    let task = AbortOnDropHandle::new(tokio::spawn(async move {
+        let mut sticky_path = sticky_path;
+        let mut watcher = conn.paths_stream();
+        loop {
+            let paths = watcher.next().await.ok_or(anyerr!("watcher stopped"))?;
+            if paths.iter().find(|p| p.id() == sticky_path).is_some() {
+                continue;
+            }
+            if let Some(p) = paths.iter().find(|p| p.is_ip()) {
+                output.emit(format!(
+                    "sending sticky on path {} ({})",
+                    p.id(),
+                    p.remote_addr()
+                ));
+                stream
+                    .set_affinity(StreamAffinity::Sticky(p.id()))
+                    .anyerr()?;
+                sticky_path = p.id();
+            } else {
+                output.emit("blocking transmit, waiting for direct path");
+                stream.set_affinity(StreamAffinity::Block).anyerr()?;
+            }
+        }
+    }));
+    Ok(task)
 }
 
 /// Writes as much of [`Bytes`] to a [`SendStream`] as possible within `timeout`.
@@ -991,6 +1091,13 @@ fn parse_ipv6_net(s: &str) -> Result<(SocketAddrV6, u8)> {
     let net: Ipv6Net = net.parse().std_context("invalid net")?;
     let port: u16 = port.parse().std_context("invalid port")?;
     Ok((SocketAddrV6::new(net.addr(), port, 0, 0), net.prefix_len()))
+}
+
+/// The [`StreamAffinity`] mode to use.
+#[derive(Debug, Clone, Copy)]
+enum AffinityMode {
+    StickyToDirect,
+    Any,
 }
 
 #[derive(ValueEnum, Default, Debug, Clone, Copy)]
