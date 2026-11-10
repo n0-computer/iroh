@@ -370,20 +370,14 @@ impl PathConnectionExt for Connection {
         mut f: impl FnMut(&Path<'_>) -> bool,
     ) -> Result<TransportAddr> {
         let mut stream = self.paths_stream();
-        tokio::time::timeout(timeout, async {
-            while let Some(paths) = stream.next().await {
-                let selected = paths
-                    .iter()
-                    .find(|p| p.is_selected())
-                    .expect("no selected path");
-                if f(&selected) {
-                    return Ok(selected.remote_addr().clone());
-                }
-            }
-            Err(anyerr!("path stream ended"))
-        })
+        let path = tokio::time::timeout(
+            timeout,
+            stream.wait_any(|path| path.is_selected() && f(path)),
+        )
         .await
         .with_std_context(|_| format!("wait_selected timed out after {timeout:?}"))?
+        .anyerr()?;
+        Ok(path.remote_addr().clone())
     }
 }
 

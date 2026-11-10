@@ -1657,6 +1657,39 @@ mod tests {
             }
         );
 
+        // Recheck current state after ordinary polling and cancelled waits.
+        let direct = tokio::time::timeout(
+            Duration::from_secs(1),
+            paths_client.wait_any(|path| path.is_ip()),
+        )
+        .await
+        .anyerr()?
+        .anyerr()?;
+        assert!(direct.is_ip());
+        // Copy the ID before mutably borrowing the stream for another wait.
+        let direct_id = direct.id();
+        assert!(
+            n0_future::future::now_or_never(paths_client.wait_none(|path| path.id() == direct_id))
+                .is_none()
+        );
+        assert!(n0_future::future::now_or_never(paths_client.wait_any(|_| false)).is_none());
+        n0_future::future::now_or_never(paths_client.wait_none(|_| false))
+            .expect("no matching paths is immediately ready")
+            .anyerr()?;
+        let same =
+            n0_future::future::now_or_never(paths_client.wait_any(|path| path.id() == direct_id))
+                .expect("existing path is immediately available")
+                .anyerr()?;
+        assert_eq!(direct_id, same.id());
+        // A temporary stream can be used when extracting an owned value immediately.
+        let from_temporary = conn_client
+            .paths_stream()
+            .wait_any(|path| path.is_ip())
+            .await
+            .anyerr()?
+            .id();
+        assert_eq!(from_temporary, direct_id);
+
         // Close the client connection.
         info!("close client conn");
         conn_client.close(0u32.into(), b"");
@@ -1672,6 +1705,16 @@ mod tests {
         })
         .await
         .expect("server paths watcher did not close within 8s of connection close");
+
+        assert!(matches!(
+            paths_client.wait_any(|_| true).await,
+            Err(n0_watcher::Disconnected)
+        ));
+        // Connection closure is an error, not an empty snapshot.
+        assert!(matches!(
+            paths_client.wait_none(|_| false).await,
+            Err(n0_watcher::Disconnected)
+        ));
 
         server.close().await;
         client.close().await;
