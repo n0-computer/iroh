@@ -1663,8 +1663,7 @@ mod tests {
             paths_client.wait_any(|path| path.is_ip()),
         )
         .await
-        .anyerr()?
-        .anyerr()?;
+        .anyerr()??;
         assert!(direct.is_ip());
         // Copy the ID before mutably borrowing the stream for another wait.
         let direct_id = direct.id();
@@ -1674,19 +1673,16 @@ mod tests {
         );
         assert!(n0_future::future::now_or_never(paths_client.wait_any(|_| false)).is_none());
         n0_future::future::now_or_never(paths_client.wait_none(|_| false))
-            .expect("no matching paths is immediately ready")
-            .anyerr()?;
+            .expect("no matching paths is immediately ready")?;
         let same =
             n0_future::future::now_or_never(paths_client.wait_any(|path| path.id() == direct_id))
-                .expect("existing path is immediately available")
-                .anyerr()?;
+                .expect("existing path is immediately available")?;
         assert_eq!(direct_id, same.id());
         // A temporary stream can be used when extracting an owned value immediately.
         let from_temporary = conn_client
             .paths_stream()
             .wait_any(|path| path.is_ip())
-            .await
-            .anyerr()?
+            .await?
             .id();
         assert_eq!(from_temporary, direct_id);
 

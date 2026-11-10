@@ -94,7 +94,7 @@ async fn run_alice(conn: Connection) -> Result<()> {
     // affinity to blocked before we have a direct path we will already be consuming
     // connection-wide send window capacity for a stream that can not send anyway. So we
     // prefer to delay opening the stream.
-    let direct_path = paths_watcher.wait_any(|p| p.is_ip()).await.anyerr()?.id();
+    let direct_path = paths_watcher.wait_any(|p| p.is_ip()).await?.id();
 
     // Create a SendStream and make it stick to a direct path.
     println!("stream sticks to direct path {direct_path}");
@@ -116,12 +116,13 @@ async fn run_alice(conn: Connection) -> Result<()> {
             let mut paths_watcher = conn.paths_stream();
             let mut direct_path = direct_path;
             loop {
-                // Keep the pin until its path closes, then wait for a direct replacement.
+                // Only change the sticky path if the currently used path is no longer
+                // available.
                 paths_watcher.wait_none(|p| p.id() == direct_path).await?;
                 println!("no direct path left, blocking the stream");
                 send_stream.set_affinity(StreamAffinity::Block).anyerr()?;
-                direct_path = paths_watcher.wait_any(|p| p.is_ip()).await.anyerr()?.id();
-                println!("stream sticks to direct path {}", path.id());
+                direct_path = paths_watcher.wait_any(|p| p.is_ip()).await?.id();
+                println!("stream sticks to direct path {direct_path}");
                 send_stream
                     .set_affinity(StreamAffinity::Sticky(direct_path))
                     .anyerr()?;

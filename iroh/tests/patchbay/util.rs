@@ -375,8 +375,7 @@ impl PathConnectionExt for Connection {
             stream.wait_any(|path| path.is_selected() && f(path)),
         )
         .await
-        .with_std_context(|_| format!("wait_selected timed out after {timeout:?}"))?
-        .anyerr()?;
+        .with_std_context(|_| format!("wait_selected timed out after {timeout:?}"))??;
         Ok(path.remote_addr().clone())
     }
 }
