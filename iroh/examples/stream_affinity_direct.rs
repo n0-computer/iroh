@@ -11,12 +11,12 @@
 //!
 //! So Alice:
 //! 1. Waits until the connection has a direct path.
-//! 2. Opens a uni stream and pins it to that path with [`StreamAffinity::Sticky`] before
-//!    writing anything.
+//! 2. Opens a uni stream and makes it sticky to that direct path with
+//!    [`StreamAffinity::Sticky`] before writing anything.
 //! 3. Sends the data over the stream while watching for any changes to the available paths.
-//!    When the pinned path closes another direct path is pinned. Or as a last resort the
-//!    stream is blocked. When a direct path opens while the stream is blocked, it pins the
-//!    stream to it.
+//!    When the sticky path closes, she makes the stream sticky to another direct path. Or
+//!    as a last resort the stream is blocked. When a direct path opens while the stream is
+//!    blocked, she makes the stream stick to it.
 //!
 //! ## Usage
 //!
@@ -92,7 +92,7 @@ async fn run_alice(conn: Connection) -> Result<()> {
     // affinity to blocked before we have a direct path we will already be consuming
     // connection-wide send window capacity for a stream that can not send anyway. So we
     // prefer to delay opening the stream.
-    let direct_path = loop {
+    let mut direct_path = loop {
         let Some(paths) = paths_watcher.next().await else {
             return Err(anyerr!("path watcher stopped"));
         };
@@ -102,14 +102,14 @@ async fn run_alice(conn: Connection) -> Result<()> {
         }
     };
 
-    // Create a SendStream and pin it to the a direct path.
-    println!("pinning the stream to direct path {direct_path}");
+    // Create a SendStream and make it stick to a direct path.
+    println!("stream sticks to direct path {direct_path}");
     let mut send_stream = conn.open_uni().await.anyerr()?;
     send_stream
         .set_affinity(StreamAffinity::Sticky(direct_path))
         .anyerr()?;
 
-    // Spawn a task to watch the paths and update the pin as needed. The task is aborted
+    // Spawn a task to watch the paths and update the affinity as needed. The task is aborted
     // once it is out of scope, so no need to manage it further. We do not know that bob
     // received all the data until it is signalled by closing the connection, that is the
     // protocol agreement. So we can not stop this task before we get this signal as before
@@ -122,14 +122,15 @@ async fn run_alice(conn: Connection) -> Result<()> {
             let mut paths_watcher = conn.paths_stream();
             while let Some(paths) = paths_watcher.next().await {
                 print_open_paths(&paths);
-                // Only change the pinned path if the currently used path is no longer
+                // Only change the sticky path if the currently used path is no longer
                 // available.
                 if paths.iter().find(|p| p.id() == direct_path).is_none() {
                     if let Some(path) = paths.iter().find(|p| p.is_ip()) {
-                        println!("pinning the stream to direct path {}", path.id());
+                        println!("stream sticks to direct path {}", path.id());
                         send_stream
                             .set_affinity(StreamAffinity::Sticky(path.id()))
                             .anyerr()?;
+                        direct_path = path.id();
                     } else {
                         println!("no direct path left, blocking the stream");
                         send_stream.set_affinity(StreamAffinity::Block).anyerr()?;
