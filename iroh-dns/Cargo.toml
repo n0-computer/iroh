@@ -20,7 +20,7 @@ n0-error = "1.0.0"
 n0-future = "0.3"
 portable-atomic = "1"
 rand = "0.10"
-simple-dns = "0.12"
+simple-dns = "0.13"
 strum = { version = "0.28", features = ["derive"] }
 tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"
