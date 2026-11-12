@@ -69,6 +69,15 @@ impl noq::Runtime for Runtime {
         noq::TokioRuntime.new_timer(i)
     }
 
+    /// Tokio's clock.
+    ///
+    /// Like the timers: noq's default reads the system clock, which does not follow
+    /// tokio's paused test clock.
+    #[cfg(not(wasm_browser))]
+    fn now(&self) -> std::time::Instant {
+        noq::TokioRuntime.now()
+    }
+
     #[cfg(wasm_browser)]
     fn new_timer(&self, deadline: n0_future::time::Instant) -> Pin<Box<dyn noq::AsyncTimer>> {
         Box::pin(web::Timer(n0_future::time::sleep_until(deadline)))
@@ -131,5 +140,23 @@ mod web {
         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
             Pin::new(&mut self.0).poll(cx)
         }
+    }
+}
+
+#[cfg(all(test, not(wasm_browser)))]
+mod tests {
+    use std::time::Duration;
+
+    use iroh_base::SecretKey;
+    use noq::Runtime as _;
+
+    use super::Runtime;
+
+    #[tokio::test(start_paused = true)]
+    async fn now_follows_tokio_clock() {
+        let rt = Runtime::new(SecretKey::from_bytes(&[7u8; 32]).public());
+        let before = rt.now();
+        tokio::time::advance(Duration::from_secs(60)).await;
+        assert_eq!(rt.now() - before, Duration::from_secs(60));
     }
 }
