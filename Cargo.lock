@@ -2277,7 +2277,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
- "simple-dns",
+ "simple-dns 0.13.0",
  "smallvec",
  "strum",
  "testdir",
@@ -2350,7 +2350,7 @@ dependencies = [
  "portable-atomic",
  "rand 0.10.3",
  "rustls",
- "simple-dns",
+ "simple-dns 0.13.0",
  "strum",
  "tokio",
  "tracing",
@@ -2399,7 +2399,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "simple-dns",
+ "simple-dns 0.13.0",
  "socket2",
  "strum",
  "tempfile",
@@ -2843,7 +2843,7 @@ dependencies = [
  "reqwest",
  "rustc-hash",
  "rustls",
- "simple-dns",
+ "simple-dns 0.12.0",
  "system-configuration 0.8.0",
  "tokio",
  "tokio-rustls",
@@ -4617,6 +4617,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple-dns"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f6dbb5d714bdbc8d8f9d0f556c4e914384b794af849092033513f0898245f88"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
 name = "siphasher"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4869,7 +4878,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
