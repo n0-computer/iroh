@@ -112,32 +112,29 @@ async fn run_alice(conn: Connection) -> Result<()> {
     // protocol agreement. So we can not stop this task before we get this signal as before
     // that we might still need to retransmit data even though we already called
     // SendStream::finish.
-    let _watcher: AbortOnDropHandle<Result<()>> = AbortOnDropHandle::new(tokio::spawn({
+    let _watcher = AbortOnDropHandle::new(tokio::spawn({
         let conn = conn.clone();
         let send_stream = send_stream.clone();
         async move {
-            let mut paths_watcher = conn.paths_stream();
             let mut direct_path = direct_path;
-            loop {
-                // Only change the sticky path if the currently used path is no longer
-                // available.
-                paths_watcher
-                    .wait_none(|p| p.id() == direct_path)
-                    .await
-                    .context("path stream ended")?;
-                println!("direct path {direct_path} closed, blocking the stream");
-                send_stream.set_affinity(StreamAffinity::Block).anyerr()?;
-                // Returns immediately if another direct path is already open.
-                direct_path = paths_watcher
-                    .wait_any(|p| p.is_ip())
-                    .await
-                    .context("path stream ended")?
-                    .id();
+            let mut paths_watcher = conn.paths_stream();
+            // Only change the sticky path if the current direct path goes away.
+            while let Some(paths) = paths_watcher.wait_none(|p| p.id() == direct_path).await {
+                direct_path = if let Some(path) = paths.iter().find(|p| p.is_ip()) {
+                    // A new direct path is already available. Use it.
+                    path.id()
+                } else {
+                    println!("no direct path left, blocking the stream");
+                    // No direct path is available. Wait for one and block the stream until then.
+                    send_stream.set_affinity(StreamAffinity::Block).anyerr()?;
+                    paths_watcher.wait_any(|p| p.is_ip()).await.anyerr()?.id()
+                };
                 println!("stream sticks to direct path {direct_path}");
                 send_stream
                     .set_affinity(StreamAffinity::Sticky(direct_path))
                     .anyerr()?;
             }
+            n0_error::Ok(())
         }
     }));
 
