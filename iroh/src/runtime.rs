@@ -69,8 +69,10 @@ impl noq::Runtime for Runtime {
         noq::TokioRuntime.new_timer(i)
     }
 
-    /// Tokio's clock, like the timers: noq's default reads the system clock,
-    /// which does not follow tokio's paused test clock.
+    /// Tokio's clock.
+    ///
+    /// Like the timers: noq's default reads the system clock, which does not follow
+    /// tokio's paused test clock.
     #[cfg(not(wasm_browser))]
     fn now(&self) -> std::time::Instant {
         noq::TokioRuntime.now()
