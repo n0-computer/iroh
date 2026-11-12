@@ -1187,8 +1187,8 @@ impl Connection<HandshakeCompleted> {
 
     /// Returns a stream of [`PathList`] snapshots for this connection.
     ///
-    /// Yields the current snapshot on the first poll, and a fresh
-    /// snapshot whenever the open paths or the selected path change.
+    /// Yields a snapshot taken at creation, then a fresh one whenever
+    /// the open paths or the selected path change.
     /// Ends when the connection closes.
     ///
     /// The stream borrows this [`Connection`]. To consume it from a
@@ -1362,7 +1362,7 @@ impl WeakConnectionHandle {
 
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
-    use std::time::Duration;
+    use std::{net::Ipv4Addr, time::Duration};
 
     use iroh_base::{EndpointAddr, SecretKey};
     use iroh_relay::tls::CaTlsConfig;
@@ -1375,7 +1375,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, PathList, ZeroRttStatus, presets},
+        endpoint::{ConnectOptions, Connection, Incoming, PathList, ZeroRttStatus, presets},
         test_utils::run_relay_server,
     };
 
@@ -1589,17 +1589,26 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    #[traced_test]
-    async fn test_paths_watcher() -> Result {
+    /// Connects a client to a server, both using a local relay.
+    ///
+    /// Binds only to `127.0.0.1`, so there is a single direct path.
+    async fn connect_with_relay() -> Result<(
+        iroh_relay::server::Server,
+        Endpoint,
+        Endpoint,
+        Connection,
+        Connection,
+    )> {
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, relay) = run_relay_server().await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
             .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
             .await?;
 
@@ -1607,6 +1616,8 @@ mod tests {
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
             .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
             .await?;
 
@@ -1620,6 +1631,13 @@ mod tests {
             async { server.accept().await.unwrap().await.unwrap() }
         );
         info!("connected");
+        Ok((relay, server, client, conn_client, conn_server))
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_paths_watcher() -> Result {
+        let (_guard, server, client, conn_client, conn_server) = connect_with_relay().await?;
 
         let mut paths_client = conn_client.paths_stream();
         let mut paths_server = conn_server.paths_stream();
@@ -1657,22 +1675,74 @@ mod tests {
             }
         );
 
-        // Recheck current state after ordinary polling and cancelled waits.
-        let direct = now_or_never(paths_client.wait_any(|path| path.is_ip()))
-            .expect("existing path is immediately available")
-            .context("path stream ended")?;
-        assert!(direct.is_ip());
-        let direct_id = direct.id();
+        // Close the client connection.
+        info!("close client conn");
+        conn_client.close(0u32.into(), b"");
+
+        // Verify that the path watch streams close shortly after the connection is closed
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while paths_client.next().await.is_some() {}
+        })
+        .await
+        .expect("client paths watcher did not close within 8s of connection close");
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while paths_server.next().await.is_some() {}
+        })
+        .await
+        .expect("server paths watcher did not close within 8s of connection close");
+
+        server.close().await;
+        client.close().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_paths_wait_helpers() -> Result {
+        let (_guard, server, client, conn_client, _conn_server) = connect_with_relay().await?;
+        let mut paths_client = conn_client.paths_stream();
+
+        // With a relay path, closing the direct path keeps the connection open.
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            paths_client.wait_any(|path| path.is_relay()),
+        )
+        .await
+        .expect("timeout waiting for a relay path")
+        .context("path stream ended")?;
+        let direct_id = tokio::time::timeout(
+            Duration::from_secs(10),
+            paths_client.wait_any(|path| path.is_ip()),
+        )
+        .await
+        .expect("timeout waiting for a direct path")
+        .context("path stream ended")?
+        .id();
+
+        // A cancelled wait does not consume the current snapshot.
         assert!(now_or_never(paths_client.wait_none(|path| path.id() == direct_id)).is_none());
         assert!(now_or_never(paths_client.wait_any(|_| false)).is_none());
-        assert_eq!(
-            now_or_never(paths_client.wait_none(|_| false)),
-            Some(Some(()))
-        );
+        let paths = now_or_never(paths_client.next())
+            .expect("current snapshot is yielded after a cancelled wait")
+            .context("path stream ended")?;
+        assert!(paths.get(direct_id).is_some());
+
+        // Waits check the current state first.
+        let paths = now_or_never(paths_client.wait_none(|_| false))
+            .expect("condition is immediately met")
+            .context("path stream ended")?;
+        assert!(paths.get(direct_id).is_some());
         let same = now_or_never(paths_client.wait_any(|path| path.id() == direct_id))
             .expect("existing path is immediately available")
             .context("path stream ended")?;
         assert_eq!(direct_id, same.id());
+
+        // The stream yields the snapshot that satisfied the wait again.
+        let paths = now_or_never(paths_client.next())
+            .expect("matched snapshot is yielded again")
+            .context("path stream ended")?;
+        assert!(paths.get(direct_id).is_some());
 
         // A pending wait wakes when its matching path disappears.
         {
@@ -1693,22 +1763,14 @@ mod tests {
         assert!(conn_client.paths().get(direct_id).is_none());
         assert!(conn_client.close_reason().is_none());
 
-        // Close the client connection.
-        info!("close client conn");
+        // After close, the stream stays ended and waits return `None`.
         conn_client.close(0u32.into(), b"");
-
-        // Verify that the path watch streams close shortly after the connection is closed
         tokio::time::timeout(Duration::from_secs(30), async {
             while paths_client.next().await.is_some() {}
         })
         .await
-        .expect("client paths watcher did not close within 8s of connection close");
-        tokio::time::timeout(Duration::from_secs(30), async {
-            while paths_server.next().await.is_some() {}
-        })
-        .await
-        .expect("server paths watcher did not close within 8s of connection close");
-
+        .expect("client paths watcher did not close within 30s of connection close");
+        assert!(matches!(now_or_never(paths_client.next()), Some(None)));
         assert!(matches!(
             now_or_never(paths_client.wait_any(|_| true)),
             Some(None)
@@ -1719,9 +1781,9 @@ mod tests {
             Some(None)
         ));
 
+        drop(paths_client);
         server.close().await;
         client.close().await;
-
         Ok(())
     }
 }

@@ -345,7 +345,7 @@ fn log_result_on_device<E: std::fmt::Display + Send + 'static>(dev: &Device, res
 }
 
 /// Extension trait on [`Connection`] providing timeout-bounded wait helpers
-/// on top of [`Connection::paths`] and [`PathList::stream`].
+/// on top of [`Connection::paths_stream`].
 pub(crate) trait PathConnectionExt {
     /// Waits until the selected path satisfies `f`. Returns the matching
     /// path's [`TransportAddr`].

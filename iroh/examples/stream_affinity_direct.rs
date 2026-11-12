@@ -30,9 +30,8 @@ use iroh::{
     endpoint::{Connection, ConnectionError, presets},
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
-use n0_future::task::AbortOnDropHandle;
+use n0_future::{StreamExt, task::AbortOnDropHandle};
 use noq::StreamAffinity;
-use tokio_stream::StreamExt;
 
 const ALPN: &[u8] = b"iroh-example/stream-affinity-direct/0";
 
@@ -86,8 +85,8 @@ async fn run_bob(conn: Connection) -> Result<()> {
 }
 
 async fn run_alice(conn: Connection) -> Result<()> {
-    // Let's print all paths changes for alice.
-    tokio::spawn(print_open_paths(conn.clone()));
+    // Print all path changes.
+    let _printer = AbortOnDropHandle::new(tokio::spawn(print_open_paths(conn.clone())));
     // We need to watch the paths since we only want to transmit on a direct path.
     let mut paths_watcher = conn.paths_stream();
     // Wait for a direct path to appear. If we open the stream immediately and than set it's
@@ -126,8 +125,9 @@ async fn run_alice(conn: Connection) -> Result<()> {
                     .wait_none(|p| p.id() == direct_path)
                     .await
                     .context("path stream ended")?;
-                println!("no direct path left, blocking the stream");
+                println!("direct path {direct_path} closed, blocking the stream");
                 send_stream.set_affinity(StreamAffinity::Block).anyerr()?;
+                // Returns immediately if another direct path is already open.
                 direct_path = paths_watcher
                     .wait_any(|p| p.is_ip())
                     .await
