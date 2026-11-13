@@ -1187,8 +1187,8 @@
 <a href=#1187 id=1187 data-nosnippet>1187</a>
 <a href=#1188 id=1188 data-nosnippet>1188</a>    <span class="doccomment">/// Returns a stream of [`PathList`] snapshots for this connection.
 <a href=#1189 id=1189 data-nosnippet>1189</a>    ///
-<a href=#1190 id=1190 data-nosnippet>1190</a>    /// Yields the current snapshot on the first poll, and a fresh
-<a href=#1191 id=1191 data-nosnippet>1191</a>    /// snapshot whenever the open paths or the selected path change.
+<a href=#1190 id=1190 data-nosnippet>1190</a>    /// Yields a snapshot taken at creation, then a fresh one whenever
+<a href=#1191 id=1191 data-nosnippet>1191</a>    /// the open paths or the selected path change.
 <a href=#1192 id=1192 data-nosnippet>1192</a>    /// Ends when the connection closes.
 <a href=#1193 id=1193 data-nosnippet>1193</a>    ///
 <a href=#1194 id=1194 data-nosnippet>1194</a>    /// The stream borrows this [`Connection`]. To consume it from a
@@ -1362,7 +1362,7 @@
 <a href=#1362 id=1362 data-nosnippet>1362</a>
 <a href=#1363 id=1363 data-nosnippet>1363</a><span class="attr">#[cfg(all(test, with_crypto_provider))]
 <a href=#1364 id=1364 data-nosnippet>1364</a></span><span class="kw">mod </span>tests {
-<a href=#1365 id=1365 data-nosnippet>1365</a>    <span class="kw">use </span>std::time::Duration;
+<a href=#1365 id=1365 data-nosnippet>1365</a>    <span class="kw">use </span>std::{net::Ipv4Addr, time::Duration};
 <a href=#1366 id=1366 data-nosnippet>1366</a>
 <a href=#1367 id=1367 data-nosnippet>1367</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey};
 <a href=#1368 id=1368 data-nosnippet>1368</a>    <span class="kw">use </span>iroh_relay::tls::CaTlsConfig;
@@ -1375,7 +1375,7 @@
 <a href=#1375 id=1375 data-nosnippet>1375</a>    <span class="kw">use </span><span class="kw">super</span>::Endpoint;
 <a href=#1376 id=1376 data-nosnippet>1376</a>    <span class="kw">use crate</span>::{
 <a href=#1377 id=1377 data-nosnippet>1377</a>        RelayMode,
-<a href=#1378 id=1378 data-nosnippet>1378</a>        endpoint::{ConnectOptions, Incoming, PathList, ZeroRttStatus, presets},
+<a href=#1378 id=1378 data-nosnippet>1378</a>        endpoint::{ConnectOptions, Connection, Incoming, PathList, ZeroRttStatus, presets},
 <a href=#1379 id=1379 data-nosnippet>1379</a>        test_utils::run_relay_server,
 <a href=#1380 id=1380 data-nosnippet>1380</a>    };
 <a href=#1381 id=1381 data-nosnippet>1381</a>
@@ -1589,139 +1589,187 @@
 <a href=#1589 id=1589 data-nosnippet>1589</a>        <span class="prelude-val">Ok</span>(())
 <a href=#1590 id=1590 data-nosnippet>1590</a>    }
 <a href=#1591 id=1591 data-nosnippet>1591</a>
-<a href=#1592 id=1592 data-nosnippet>1592</a>    <span class="attr">#[tokio::test]
-<a href=#1593 id=1593 data-nosnippet>1593</a>    #[traced_test]
-<a href=#1594 id=1594 data-nosnippet>1594</a>    </span><span class="kw">async fn </span>test_paths_watcher() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1595 id=1595 data-nosnippet>1595</a>        <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"test"</span>;
-<a href=#1596 id=1596 data-nosnippet>1596</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#1597 id=1597 data-nosnippet>1597</a>        <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1598 id=1598 data-nosnippet>1598</a>        <span class="kw">let </span>server = Endpoint::builder(presets::Minimal)
-<a href=#1599 id=1599 data-nosnippet>1599</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
-<a href=#1600 id=1600 data-nosnippet>1600</a>            .secret_key(SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()))
-<a href=#1601 id=1601 data-nosnippet>1601</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
-<a href=#1602 id=1602 data-nosnippet>1602</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
-<a href=#1603 id=1603 data-nosnippet>1603</a>            .bind()
-<a href=#1604 id=1604 data-nosnippet>1604</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1605 id=1605 data-nosnippet>1605</a>
-<a href=#1606 id=1606 data-nosnippet>1606</a>        <span class="kw">let </span>client = Endpoint::builder(presets::Minimal)
-<a href=#1607 id=1607 data-nosnippet>1607</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
-<a href=#1608 id=1608 data-nosnippet>1608</a>            .secret_key(SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()))
-<a href=#1609 id=1609 data-nosnippet>1609</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
-<a href=#1610 id=1610 data-nosnippet>1610</a>            .bind()
-<a href=#1611 id=1611 data-nosnippet>1611</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1612 id=1612 data-nosnippet>1612</a>
-<a href=#1613 id=1613 data-nosnippet>1613</a>        server.online().<span class="kw">await</span>;
-<a href=#1614 id=1614 data-nosnippet>1614</a>        client.online().<span class="kw">await</span>;
-<a href=#1615 id=1615 data-nosnippet>1615</a>        <span class="kw">let </span>server_addr = server.addr();
-<a href=#1616 id=1616 data-nosnippet>1616</a>        <span class="macro">info!</span>(<span class="string">"server addr: {server_addr:?}"</span>);
-<a href=#1617 id=1617 data-nosnippet>1617</a>
-<a href=#1618 id=1618 data-nosnippet>1618</a>        <span class="kw">let </span>(conn_client, conn_server) = <span class="macro">tokio::join!</span>(
-<a href=#1619 id=1619 data-nosnippet>1619</a>            <span class="kw">async </span>{ client.connect(server_addr, ALPN).<span class="kw">await</span>.unwrap() },
-<a href=#1620 id=1620 data-nosnippet>1620</a>            <span class="kw">async </span>{ server.accept().<span class="kw">await</span>.unwrap().<span class="kw">await</span>.unwrap() }
-<a href=#1621 id=1621 data-nosnippet>1621</a>        );
-<a href=#1622 id=1622 data-nosnippet>1622</a>        <span class="macro">info!</span>(<span class="string">"connected"</span>);
+<a href=#1592 id=1592 data-nosnippet>1592</a>    <span class="doccomment">/// Connects a client to a server, both using a local relay.
+<a href=#1593 id=1593 data-nosnippet>1593</a>    ///
+<a href=#1594 id=1594 data-nosnippet>1594</a>    /// Binds only to `127.0.0.1`, so there is a single direct path.
+<a href=#1595 id=1595 data-nosnippet>1595</a>    </span><span class="kw">async fn </span>connect_with_relay() -&gt; <span class="prelude-ty">Result</span>&lt;(
+<a href=#1596 id=1596 data-nosnippet>1596</a>        iroh_relay::server::Server,
+<a href=#1597 id=1597 data-nosnippet>1597</a>        Endpoint,
+<a href=#1598 id=1598 data-nosnippet>1598</a>        Endpoint,
+<a href=#1599 id=1599 data-nosnippet>1599</a>        Connection,
+<a href=#1600 id=1600 data-nosnippet>1600</a>        Connection,
+<a href=#1601 id=1601 data-nosnippet>1601</a>    )&gt; {
+<a href=#1602 id=1602 data-nosnippet>1602</a>        <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"test"</span>;
+<a href=#1603 id=1603 data-nosnippet>1603</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#1604 id=1604 data-nosnippet>1604</a>        <span class="kw">let </span>(relay_map, _relay_url, relay) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1605 id=1605 data-nosnippet>1605</a>        <span class="kw">let </span>server = Endpoint::builder(presets::Minimal)
+<a href=#1606 id=1606 data-nosnippet>1606</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
+<a href=#1607 id=1607 data-nosnippet>1607</a>            .secret_key(SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()))
+<a href=#1608 id=1608 data-nosnippet>1608</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+<a href=#1609 id=1609 data-nosnippet>1609</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
+<a href=#1610 id=1610 data-nosnippet>1610</a>            .clear_ip_transports()
+<a href=#1611 id=1611 data-nosnippet>1611</a>            .bind_addr((Ipv4Addr::LOCALHOST, <span class="number">0</span>))<span class="question-mark">?
+<a href=#1612 id=1612 data-nosnippet>1612</a>            </span>.bind()
+<a href=#1613 id=1613 data-nosnippet>1613</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1614 id=1614 data-nosnippet>1614</a>
+<a href=#1615 id=1615 data-nosnippet>1615</a>        <span class="kw">let </span>client = Endpoint::builder(presets::Minimal)
+<a href=#1616 id=1616 data-nosnippet>1616</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
+<a href=#1617 id=1617 data-nosnippet>1617</a>            .secret_key(SecretKey::from_bytes(<span class="kw-2">&amp;</span>rng.random()))
+<a href=#1618 id=1618 data-nosnippet>1618</a>            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+<a href=#1619 id=1619 data-nosnippet>1619</a>            .clear_ip_transports()
+<a href=#1620 id=1620 data-nosnippet>1620</a>            .bind_addr((Ipv4Addr::LOCALHOST, <span class="number">0</span>))<span class="question-mark">?
+<a href=#1621 id=1621 data-nosnippet>1621</a>            </span>.bind()
+<a href=#1622 id=1622 data-nosnippet>1622</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1623 id=1623 data-nosnippet>1623</a>
-<a href=#1624 id=1624 data-nosnippet>1624</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_client = conn_client.paths_stream();
-<a href=#1625 id=1625 data-nosnippet>1625</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_server = conn_server.paths_stream();
-<a href=#1626 id=1626 data-nosnippet>1626</a>
-<a href=#1627 id=1627 data-nosnippet>1627</a>        <span class="doccomment">/// Advances the path stream until at least one IP and one relay path is available.
-<a href=#1628 id=1628 data-nosnippet>1628</a>        ///
-<a href=#1629 id=1629 data-nosnippet>1629</a>        /// Panics if the path stream finishes before that happens.
-<a href=#1630 id=1630 data-nosnippet>1630</a>        </span><span class="kw">async fn </span>wait_for_paths(<span class="kw-2">mut </span>stream: <span class="kw">impl </span>Send + Unpin + Stream&lt;Item = PathList&lt;<span class="lifetime">'_</span>&gt;&gt;) {
-<a href=#1631 id=1631 data-nosnippet>1631</a>            <span class="kw">loop </span>{
-<a href=#1632 id=1632 data-nosnippet>1632</a>                <span class="kw">let </span>paths = stream.next().<span class="kw">await</span>.expect(<span class="string">"paths stream ended"</span>);
-<a href=#1633 id=1633 data-nosnippet>1633</a>                <span class="macro">info!</span>(<span class="question-mark">?</span>paths, <span class="string">"paths"</span>);
-<a href=#1634 id=1634 data-nosnippet>1634</a>                <span class="kw">if </span>paths.len() &gt;= <span class="number">2
-<a href=#1635 id=1635 data-nosnippet>1635</a>                    </span>&amp;&amp; paths.iter().any(|p| p.is_relay())
-<a href=#1636 id=1636 data-nosnippet>1636</a>                    &amp;&amp; paths.iter().any(|p| p.is_ip())
-<a href=#1637 id=1637 data-nosnippet>1637</a>                {
-<a href=#1638 id=1638 data-nosnippet>1638</a>                    <span class="macro">info!</span>(<span class="string">"break"</span>);
-<a href=#1639 id=1639 data-nosnippet>1639</a>                    <span class="kw">return</span>;
-<a href=#1640 id=1640 data-nosnippet>1640</a>                }
-<a href=#1641 id=1641 data-nosnippet>1641</a>            }
-<a href=#1642 id=1642 data-nosnippet>1642</a>        }
-<a href=#1643 id=1643 data-nosnippet>1643</a>
-<a href=#1644 id=1644 data-nosnippet>1644</a>        <span class="comment">// Verify that both connections are notified of path changes and get an IP and a relay path.
-<a href=#1645 id=1645 data-nosnippet>1645</a>        </span><span class="macro">tokio::join!</span>(
-<a href=#1646 id=1646 data-nosnippet>1646</a>            <span class="kw">async </span>{
-<a href=#1647 id=1647 data-nosnippet>1647</a>                tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), wait_for_paths(<span class="kw-2">&amp;mut </span>paths_server))
-<a href=#1648 id=1648 data-nosnippet>1648</a>                    .instrument(<span class="macro">error_span!</span>(<span class="string">"paths-server"</span>))
-<a href=#1649 id=1649 data-nosnippet>1649</a>                    .<span class="kw">await
-<a href=#1650 id=1650 data-nosnippet>1650</a>                    </span>.unwrap()
-<a href=#1651 id=1651 data-nosnippet>1651</a>            },
-<a href=#1652 id=1652 data-nosnippet>1652</a>            <span class="kw">async </span>{
-<a href=#1653 id=1653 data-nosnippet>1653</a>                tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), wait_for_paths(<span class="kw-2">&amp;mut </span>paths_client))
-<a href=#1654 id=1654 data-nosnippet>1654</a>                    .instrument(<span class="macro">error_span!</span>(<span class="string">"paths-client"</span>))
-<a href=#1655 id=1655 data-nosnippet>1655</a>                    .<span class="kw">await
-<a href=#1656 id=1656 data-nosnippet>1656</a>                    </span>.unwrap()
-<a href=#1657 id=1657 data-nosnippet>1657</a>            }
-<a href=#1658 id=1658 data-nosnippet>1658</a>        );
-<a href=#1659 id=1659 data-nosnippet>1659</a>
-<a href=#1660 id=1660 data-nosnippet>1660</a>        <span class="comment">// Recheck current state after ordinary polling and cancelled waits.
-<a href=#1661 id=1661 data-nosnippet>1661</a>        </span><span class="kw">let </span>direct = now_or_never(paths_client.wait_any(|path| path.is_ip()))
-<a href=#1662 id=1662 data-nosnippet>1662</a>            .expect(<span class="string">"existing path is immediately available"</span>)
-<a href=#1663 id=1663 data-nosnippet>1663</a>            .context(<span class="string">"path stream ended"</span>)<span class="question-mark">?</span>;
-<a href=#1664 id=1664 data-nosnippet>1664</a>        <span class="macro">assert!</span>(direct.is_ip());
-<a href=#1665 id=1665 data-nosnippet>1665</a>        <span class="kw">let </span>direct_id = direct.id();
-<a href=#1666 id=1666 data-nosnippet>1666</a>        <span class="macro">assert!</span>(now_or_never(paths_client.wait_none(|path| path.id() == direct_id)).is_none());
-<a href=#1667 id=1667 data-nosnippet>1667</a>        <span class="macro">assert!</span>(now_or_never(paths_client.wait_any(|<span class="kw">_</span>| <span class="bool-val">false</span>)).is_none());
-<a href=#1668 id=1668 data-nosnippet>1668</a>        <span class="macro">assert_eq!</span>(
-<a href=#1669 id=1669 data-nosnippet>1669</a>            now_or_never(paths_client.wait_none(|<span class="kw">_</span>| <span class="bool-val">false</span>)),
-<a href=#1670 id=1670 data-nosnippet>1670</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(()))
-<a href=#1671 id=1671 data-nosnippet>1671</a>        );
-<a href=#1672 id=1672 data-nosnippet>1672</a>        <span class="kw">let </span>same = now_or_never(paths_client.wait_any(|path| path.id() == direct_id))
-<a href=#1673 id=1673 data-nosnippet>1673</a>            .expect(<span class="string">"existing path is immediately available"</span>)
-<a href=#1674 id=1674 data-nosnippet>1674</a>            .context(<span class="string">"path stream ended"</span>)<span class="question-mark">?</span>;
-<a href=#1675 id=1675 data-nosnippet>1675</a>        <span class="macro">assert_eq!</span>(direct_id, same.id());
-<a href=#1676 id=1676 data-nosnippet>1676</a>
-<a href=#1677 id=1677 data-nosnippet>1677</a>        <span class="comment">// A pending wait wakes when its matching path disappears.
-<a href=#1678 id=1678 data-nosnippet>1678</a>        </span>{
-<a href=#1679 id=1679 data-nosnippet>1679</a>            <span class="kw">let </span>wait = paths_client.wait_none(|path| path.id() == direct_id);
-<a href=#1680 id=1680 data-nosnippet>1680</a>            <span class="macro">tokio::pin!</span>(wait);
-<a href=#1681 id=1681 data-nosnippet>1681</a>            <span class="macro">assert!</span>(now_or_never(wait.as_mut()).is_none());
-<a href=#1682 id=1682 data-nosnippet>1682</a>            conn_client
-<a href=#1683 id=1683 data-nosnippet>1683</a>                .inner
-<a href=#1684 id=1684 data-nosnippet>1684</a>                .path(direct_id)
-<a href=#1685 id=1685 data-nosnippet>1685</a>                .expect(<span class="string">"direct path is open"</span>)
-<a href=#1686 id=1686 data-nosnippet>1686</a>                .close()
-<a href=#1687 id=1687 data-nosnippet>1687</a>                .anyerr()<span class="question-mark">?</span>;
-<a href=#1688 id=1688 data-nosnippet>1688</a>            tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), wait)
-<a href=#1689 id=1689 data-nosnippet>1689</a>                .<span class="kw">await
-<a href=#1690 id=1690 data-nosnippet>1690</a>                </span>.expect(<span class="string">"wait_none did not wake after closing the path"</span>)
-<a href=#1691 id=1691 data-nosnippet>1691</a>                .context(<span class="string">"path stream ended"</span>)<span class="question-mark">?</span>;
-<a href=#1692 id=1692 data-nosnippet>1692</a>        }
-<a href=#1693 id=1693 data-nosnippet>1693</a>        <span class="macro">assert!</span>(conn_client.paths().get(direct_id).is_none());
-<a href=#1694 id=1694 data-nosnippet>1694</a>        <span class="macro">assert!</span>(conn_client.close_reason().is_none());
-<a href=#1695 id=1695 data-nosnippet>1695</a>
-<a href=#1696 id=1696 data-nosnippet>1696</a>        <span class="comment">// Close the client connection.
-<a href=#1697 id=1697 data-nosnippet>1697</a>        </span><span class="macro">info!</span>(<span class="string">"close client conn"</span>);
-<a href=#1698 id=1698 data-nosnippet>1698</a>        conn_client.close(<span class="number">0u32</span>.into(), <span class="string">b""</span>);
+<a href=#1624 id=1624 data-nosnippet>1624</a>        server.online().<span class="kw">await</span>;
+<a href=#1625 id=1625 data-nosnippet>1625</a>        client.online().<span class="kw">await</span>;
+<a href=#1626 id=1626 data-nosnippet>1626</a>        <span class="kw">let </span>server_addr = server.addr();
+<a href=#1627 id=1627 data-nosnippet>1627</a>        <span class="macro">info!</span>(<span class="string">"server addr: {server_addr:?}"</span>);
+<a href=#1628 id=1628 data-nosnippet>1628</a>
+<a href=#1629 id=1629 data-nosnippet>1629</a>        <span class="kw">let </span>(conn_client, conn_server) = <span class="macro">tokio::join!</span>(
+<a href=#1630 id=1630 data-nosnippet>1630</a>            <span class="kw">async </span>{ client.connect(server_addr, ALPN).<span class="kw">await</span>.unwrap() },
+<a href=#1631 id=1631 data-nosnippet>1631</a>            <span class="kw">async </span>{ server.accept().<span class="kw">await</span>.unwrap().<span class="kw">await</span>.unwrap() }
+<a href=#1632 id=1632 data-nosnippet>1632</a>        );
+<a href=#1633 id=1633 data-nosnippet>1633</a>        <span class="macro">info!</span>(<span class="string">"connected"</span>);
+<a href=#1634 id=1634 data-nosnippet>1634</a>        <span class="prelude-val">Ok</span>((relay, server, client, conn_client, conn_server))
+<a href=#1635 id=1635 data-nosnippet>1635</a>    }
+<a href=#1636 id=1636 data-nosnippet>1636</a>
+<a href=#1637 id=1637 data-nosnippet>1637</a>    <span class="attr">#[tokio::test]
+<a href=#1638 id=1638 data-nosnippet>1638</a>    #[traced_test]
+<a href=#1639 id=1639 data-nosnippet>1639</a>    </span><span class="kw">async fn </span>test_paths_watcher() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#1640 id=1640 data-nosnippet>1640</a>        <span class="kw">let </span>(_guard, server, client, conn_client, conn_server) = connect_with_relay().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1641 id=1641 data-nosnippet>1641</a>
+<a href=#1642 id=1642 data-nosnippet>1642</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_client = conn_client.paths_stream();
+<a href=#1643 id=1643 data-nosnippet>1643</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_server = conn_server.paths_stream();
+<a href=#1644 id=1644 data-nosnippet>1644</a>
+<a href=#1645 id=1645 data-nosnippet>1645</a>        <span class="doccomment">/// Advances the path stream until at least one IP and one relay path is available.
+<a href=#1646 id=1646 data-nosnippet>1646</a>        ///
+<a href=#1647 id=1647 data-nosnippet>1647</a>        /// Panics if the path stream finishes before that happens.
+<a href=#1648 id=1648 data-nosnippet>1648</a>        </span><span class="kw">async fn </span>wait_for_paths(<span class="kw-2">mut </span>stream: <span class="kw">impl </span>Send + Unpin + Stream&lt;Item = PathList&lt;<span class="lifetime">'_</span>&gt;&gt;) {
+<a href=#1649 id=1649 data-nosnippet>1649</a>            <span class="kw">loop </span>{
+<a href=#1650 id=1650 data-nosnippet>1650</a>                <span class="kw">let </span>paths = stream.next().<span class="kw">await</span>.expect(<span class="string">"paths stream ended"</span>);
+<a href=#1651 id=1651 data-nosnippet>1651</a>                <span class="macro">info!</span>(<span class="question-mark">?</span>paths, <span class="string">"paths"</span>);
+<a href=#1652 id=1652 data-nosnippet>1652</a>                <span class="kw">if </span>paths.len() &gt;= <span class="number">2
+<a href=#1653 id=1653 data-nosnippet>1653</a>                    </span>&amp;&amp; paths.iter().any(|p| p.is_relay())
+<a href=#1654 id=1654 data-nosnippet>1654</a>                    &amp;&amp; paths.iter().any(|p| p.is_ip())
+<a href=#1655 id=1655 data-nosnippet>1655</a>                {
+<a href=#1656 id=1656 data-nosnippet>1656</a>                    <span class="macro">info!</span>(<span class="string">"break"</span>);
+<a href=#1657 id=1657 data-nosnippet>1657</a>                    <span class="kw">return</span>;
+<a href=#1658 id=1658 data-nosnippet>1658</a>                }
+<a href=#1659 id=1659 data-nosnippet>1659</a>            }
+<a href=#1660 id=1660 data-nosnippet>1660</a>        }
+<a href=#1661 id=1661 data-nosnippet>1661</a>
+<a href=#1662 id=1662 data-nosnippet>1662</a>        <span class="comment">// Verify that both connections are notified of path changes and get an IP and a relay path.
+<a href=#1663 id=1663 data-nosnippet>1663</a>        </span><span class="macro">tokio::join!</span>(
+<a href=#1664 id=1664 data-nosnippet>1664</a>            <span class="kw">async </span>{
+<a href=#1665 id=1665 data-nosnippet>1665</a>                tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), wait_for_paths(<span class="kw-2">&amp;mut </span>paths_server))
+<a href=#1666 id=1666 data-nosnippet>1666</a>                    .instrument(<span class="macro">error_span!</span>(<span class="string">"paths-server"</span>))
+<a href=#1667 id=1667 data-nosnippet>1667</a>                    .<span class="kw">await
+<a href=#1668 id=1668 data-nosnippet>1668</a>                    </span>.unwrap()
+<a href=#1669 id=1669 data-nosnippet>1669</a>            },
+<a href=#1670 id=1670 data-nosnippet>1670</a>            <span class="kw">async </span>{
+<a href=#1671 id=1671 data-nosnippet>1671</a>                tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), wait_for_paths(<span class="kw-2">&amp;mut </span>paths_client))
+<a href=#1672 id=1672 data-nosnippet>1672</a>                    .instrument(<span class="macro">error_span!</span>(<span class="string">"paths-client"</span>))
+<a href=#1673 id=1673 data-nosnippet>1673</a>                    .<span class="kw">await
+<a href=#1674 id=1674 data-nosnippet>1674</a>                    </span>.unwrap()
+<a href=#1675 id=1675 data-nosnippet>1675</a>            }
+<a href=#1676 id=1676 data-nosnippet>1676</a>        );
+<a href=#1677 id=1677 data-nosnippet>1677</a>
+<a href=#1678 id=1678 data-nosnippet>1678</a>        <span class="comment">// Close the client connection.
+<a href=#1679 id=1679 data-nosnippet>1679</a>        </span><span class="macro">info!</span>(<span class="string">"close client conn"</span>);
+<a href=#1680 id=1680 data-nosnippet>1680</a>        conn_client.close(<span class="number">0u32</span>.into(), <span class="string">b""</span>);
+<a href=#1681 id=1681 data-nosnippet>1681</a>
+<a href=#1682 id=1682 data-nosnippet>1682</a>        <span class="comment">// Verify that the path watch streams close shortly after the connection is closed
+<a href=#1683 id=1683 data-nosnippet>1683</a>        </span>tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async </span>{
+<a href=#1684 id=1684 data-nosnippet>1684</a>            <span class="kw">while </span>paths_client.next().<span class="kw">await</span>.is_some() {}
+<a href=#1685 id=1685 data-nosnippet>1685</a>        })
+<a href=#1686 id=1686 data-nosnippet>1686</a>        .<span class="kw">await
+<a href=#1687 id=1687 data-nosnippet>1687</a>        </span>.expect(<span class="string">"client paths watcher did not close within 8s of connection close"</span>);
+<a href=#1688 id=1688 data-nosnippet>1688</a>        tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async </span>{
+<a href=#1689 id=1689 data-nosnippet>1689</a>            <span class="kw">while </span>paths_server.next().<span class="kw">await</span>.is_some() {}
+<a href=#1690 id=1690 data-nosnippet>1690</a>        })
+<a href=#1691 id=1691 data-nosnippet>1691</a>        .<span class="kw">await
+<a href=#1692 id=1692 data-nosnippet>1692</a>        </span>.expect(<span class="string">"server paths watcher did not close within 8s of connection close"</span>);
+<a href=#1693 id=1693 data-nosnippet>1693</a>
+<a href=#1694 id=1694 data-nosnippet>1694</a>        server.close().<span class="kw">await</span>;
+<a href=#1695 id=1695 data-nosnippet>1695</a>        client.close().<span class="kw">await</span>;
+<a href=#1696 id=1696 data-nosnippet>1696</a>
+<a href=#1697 id=1697 data-nosnippet>1697</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1698 id=1698 data-nosnippet>1698</a>    }
 <a href=#1699 id=1699 data-nosnippet>1699</a>
-<a href=#1700 id=1700 data-nosnippet>1700</a>        <span class="comment">// Verify that the path watch streams close shortly after the connection is closed
-<a href=#1701 id=1701 data-nosnippet>1701</a>        </span>tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async </span>{
-<a href=#1702 id=1702 data-nosnippet>1702</a>            <span class="kw">while </span>paths_client.next().<span class="kw">await</span>.is_some() {}
-<a href=#1703 id=1703 data-nosnippet>1703</a>        })
-<a href=#1704 id=1704 data-nosnippet>1704</a>        .<span class="kw">await
-<a href=#1705 id=1705 data-nosnippet>1705</a>        </span>.expect(<span class="string">"client paths watcher did not close within 8s of connection close"</span>);
-<a href=#1706 id=1706 data-nosnippet>1706</a>        tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async </span>{
-<a href=#1707 id=1707 data-nosnippet>1707</a>            <span class="kw">while </span>paths_server.next().<span class="kw">await</span>.is_some() {}
-<a href=#1708 id=1708 data-nosnippet>1708</a>        })
-<a href=#1709 id=1709 data-nosnippet>1709</a>        .<span class="kw">await
-<a href=#1710 id=1710 data-nosnippet>1710</a>        </span>.expect(<span class="string">"server paths watcher did not close within 8s of connection close"</span>);
+<a href=#1700 id=1700 data-nosnippet>1700</a>    <span class="doccomment">/// Tests the [`PathListStream`] wait helpers.
+<a href=#1701 id=1701 data-nosnippet>1701</a>    ///
+<a href=#1702 id=1702 data-nosnippet>1702</a>    /// iroh has no API to close a single path, so the test closes the direct path
+<a href=#1703 id=1703 data-nosnippet>1703</a>    /// through the inner `noq` connection.
+<a href=#1704 id=1704 data-nosnippet>1704</a>    ///
+<a href=#1705 id=1705 data-nosnippet>1705</a>    /// [`PathListStream`]: crate::endpoint::PathListStream
+<a href=#1706 id=1706 data-nosnippet>1706</a>    </span><span class="attr">#[tokio::test]
+<a href=#1707 id=1707 data-nosnippet>1707</a>    #[traced_test]
+<a href=#1708 id=1708 data-nosnippet>1708</a>    </span><span class="kw">async fn </span>test_paths_wait_helpers() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#1709 id=1709 data-nosnippet>1709</a>        <span class="kw">let </span>(_guard, server, client, conn, _conn_server) = connect_with_relay().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1710 id=1710 data-nosnippet>1710</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths = conn.paths_stream();
 <a href=#1711 id=1711 data-nosnippet>1711</a>
-<a href=#1712 id=1712 data-nosnippet>1712</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#1713 id=1713 data-nosnippet>1713</a>            now_or_never(paths_client.wait_any(|<span class="kw">_</span>| <span class="bool-val">true</span>)),
-<a href=#1714 id=1714 data-nosnippet>1714</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">None</span>)
-<a href=#1715 id=1715 data-nosnippet>1715</a>        ));
-<a href=#1716 id=1716 data-nosnippet>1716</a>        <span class="comment">// Connection closure does not satisfy the condition.
-<a href=#1717 id=1717 data-nosnippet>1717</a>        </span><span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#1718 id=1718 data-nosnippet>1718</a>            now_or_never(paths_client.wait_none(|<span class="kw">_</span>| <span class="bool-val">false</span>)),
-<a href=#1719 id=1719 data-nosnippet>1719</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">None</span>)
-<a href=#1720 id=1720 data-nosnippet>1720</a>        ));
-<a href=#1721 id=1721 data-nosnippet>1721</a>
-<a href=#1722 id=1722 data-nosnippet>1722</a>        server.close().<span class="kw">await</span>;
-<a href=#1723 id=1723 data-nosnippet>1723</a>        client.close().<span class="kw">await</span>;
-<a href=#1724 id=1724 data-nosnippet>1724</a>
-<a href=#1725 id=1725 data-nosnippet>1725</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1726 id=1726 data-nosnippet>1726</a>    }
-<a href=#1727 id=1727 data-nosnippet>1727</a>}</code></pre></div></section></main></body></html>
+<a href=#1712 id=1712 data-nosnippet>1712</a>        <span class="comment">// noq refuses to close the last path, so wait for a relay path as well.
+<a href=#1713 id=1713 data-nosnippet>1713</a>        </span><span class="kw">let </span>timeout = Duration::from_secs(<span class="number">10</span>);
+<a href=#1714 id=1714 data-nosnippet>1714</a>        tokio::time::timeout(timeout, paths.wait_any(|p| p.is_relay()))
+<a href=#1715 id=1715 data-nosnippet>1715</a>            .<span class="kw">await
+<a href=#1716 id=1716 data-nosnippet>1716</a>            </span>.anyerr()<span class="question-mark">?
+<a href=#1717 id=1717 data-nosnippet>1717</a>            </span>.context(<span class="string">"path stream ended"</span>)<span class="question-mark">?</span>;
+<a href=#1718 id=1718 data-nosnippet>1718</a>        <span class="kw">let </span>direct_id = tokio::time::timeout(timeout, paths.wait_any(|p| p.is_ip()))
+<a href=#1719 id=1719 data-nosnippet>1719</a>            .<span class="kw">await
+<a href=#1720 id=1720 data-nosnippet>1720</a>            </span>.anyerr()<span class="question-mark">?
+<a href=#1721 id=1721 data-nosnippet>1721</a>            </span>.context(<span class="string">"path stream ended"</span>)<span class="question-mark">?
+<a href=#1722 id=1722 data-nosnippet>1722</a>            </span>.id();
+<a href=#1723 id=1723 data-nosnippet>1723</a>
+<a href=#1724 id=1724 data-nosnippet>1724</a>        <span class="comment">// Cancelled waits do not consume the current snapshot.
+<a href=#1725 id=1725 data-nosnippet>1725</a>        </span><span class="macro">assert!</span>(now_or_never(paths.wait_closed(direct_id)).is_none());
+<a href=#1726 id=1726 data-nosnippet>1726</a>        <span class="macro">assert!</span>(now_or_never(paths.wait_any(|<span class="kw">_</span>| <span class="bool-val">false</span>)).is_none());
+<a href=#1727 id=1727 data-nosnippet>1727</a>        <span class="kw">let </span>snapshot = now_or_never(paths.next())
+<a href=#1728 id=1728 data-nosnippet>1728</a>            .flatten()
+<a href=#1729 id=1729 data-nosnippet>1729</a>            .context(<span class="string">"no snapshot"</span>)<span class="question-mark">?</span>;
+<a href=#1730 id=1730 data-nosnippet>1730</a>        <span class="macro">assert!</span>(snapshot.get(direct_id).is_some());
+<a href=#1731 id=1731 data-nosnippet>1731</a>
+<a href=#1732 id=1732 data-nosnippet>1732</a>        <span class="comment">// Waits check the current state first, and the stream yields their snapshot again.
+<a href=#1733 id=1733 data-nosnippet>1733</a>        </span><span class="kw">let </span>snapshot = now_or_never(paths.wait_none(|<span class="kw">_</span>| <span class="bool-val">false</span>))
+<a href=#1734 id=1734 data-nosnippet>1734</a>            .flatten()
+<a href=#1735 id=1735 data-nosnippet>1735</a>            .context(<span class="string">"wait_none did not complete immediately"</span>)<span class="question-mark">?</span>;
+<a href=#1736 id=1736 data-nosnippet>1736</a>        <span class="macro">assert!</span>(snapshot.get(direct_id).is_some());
+<a href=#1737 id=1737 data-nosnippet>1737</a>        <span class="kw">let </span>snapshot = now_or_never(paths.next())
+<a href=#1738 id=1738 data-nosnippet>1738</a>            .flatten()
+<a href=#1739 id=1739 data-nosnippet>1739</a>            .context(<span class="string">"no snapshot"</span>)<span class="question-mark">?</span>;
+<a href=#1740 id=1740 data-nosnippet>1740</a>        <span class="macro">assert!</span>(snapshot.get(direct_id).is_some());
+<a href=#1741 id=1741 data-nosnippet>1741</a>
+<a href=#1742 id=1742 data-nosnippet>1742</a>        <span class="comment">// A pending wait wakes when its path closes.
+<a href=#1743 id=1743 data-nosnippet>1743</a>        </span>{
+<a href=#1744 id=1744 data-nosnippet>1744</a>            <span class="kw">let </span>wait = paths.wait_closed(direct_id);
+<a href=#1745 id=1745 data-nosnippet>1745</a>            <span class="macro">tokio::pin!</span>(wait);
+<a href=#1746 id=1746 data-nosnippet>1746</a>            <span class="macro">assert!</span>(now_or_never(wait.as_mut()).is_none());
+<a href=#1747 id=1747 data-nosnippet>1747</a>            <span class="comment">// No iroh API closes a single path, so use the inner noq connection.
+<a href=#1748 id=1748 data-nosnippet>1748</a>            </span>conn.inner
+<a href=#1749 id=1749 data-nosnippet>1749</a>                .path(direct_id)
+<a href=#1750 id=1750 data-nosnippet>1750</a>                .context(<span class="string">"direct path is not open"</span>)<span class="question-mark">?
+<a href=#1751 id=1751 data-nosnippet>1751</a>                </span>.close()
+<a href=#1752 id=1752 data-nosnippet>1752</a>                .anyerr()<span class="question-mark">?</span>;
+<a href=#1753 id=1753 data-nosnippet>1753</a>            tokio::time::timeout(timeout, wait)
+<a href=#1754 id=1754 data-nosnippet>1754</a>                .<span class="kw">await
+<a href=#1755 id=1755 data-nosnippet>1755</a>                </span>.anyerr()<span class="question-mark">?
+<a href=#1756 id=1756 data-nosnippet>1756</a>                </span>.context(<span class="string">"path stream ended"</span>)<span class="question-mark">?</span>;
+<a href=#1757 id=1757 data-nosnippet>1757</a>        }
+<a href=#1758 id=1758 data-nosnippet>1758</a>
+<a href=#1759 id=1759 data-nosnippet>1759</a>        <span class="comment">// Once the connection closes, the stream and the waits keep returning `None`.
+<a href=#1760 id=1760 data-nosnippet>1760</a>        </span>conn.close(<span class="number">0u32</span>.into(), <span class="string">b""</span>);
+<a href=#1761 id=1761 data-nosnippet>1761</a>        <span class="kw">let </span>ended = tokio::time::timeout(timeout, paths.wait_any(|<span class="kw">_</span>| <span class="bool-val">false</span>))
+<a href=#1762 id=1762 data-nosnippet>1762</a>            .<span class="kw">await
+<a href=#1763 id=1763 data-nosnippet>1763</a>            </span>.anyerr()<span class="question-mark">?</span>;
+<a href=#1764 id=1764 data-nosnippet>1764</a>        <span class="macro">assert!</span>(ended.is_none());
+<a href=#1765 id=1765 data-nosnippet>1765</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(now_or_never(paths.next()), <span class="prelude-val">Some</span>(<span class="prelude-val">None</span>)));
+<a href=#1766 id=1766 data-nosnippet>1766</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#1767 id=1767 data-nosnippet>1767</a>            now_or_never(paths.wait_none(|<span class="kw">_</span>| <span class="bool-val">false</span>)),
+<a href=#1768 id=1768 data-nosnippet>1768</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">None</span>)
+<a href=#1769 id=1769 data-nosnippet>1769</a>        ));
+<a href=#1770 id=1770 data-nosnippet>1770</a>
+<a href=#1771 id=1771 data-nosnippet>1771</a>        server.close().<span class="kw">await</span>;
+<a href=#1772 id=1772 data-nosnippet>1772</a>        client.close().<span class="kw">await</span>;
+<a href=#1773 id=1773 data-nosnippet>1773</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1774 id=1774 data-nosnippet>1774</a>    }
+<a href=#1775 id=1775 data-nosnippet>1775</a>}</code></pre></div></section></main></body></html>
