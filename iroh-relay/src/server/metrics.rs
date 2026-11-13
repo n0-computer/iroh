@@ -38,13 +38,19 @@ pub struct Metrics {
     /// [`RelayToClientDatagram`] or [`RelayToClientDatagramBatch`] frames dropped instead of being
     /// delivered to a client, because the recipient is not connected or writing to its stream failed.
     ///
-    /// Note that frames dropped because the recipient's send queue is full or closed are not counted
-    /// here.
+    /// Frames dropped because the recipient's send queue is full or closed are counted in
+    /// [`Self::send_packets_dropped_queue`] instead.
     ///
     /// [`RelayToClientDatagram`]: crate::protos::common::FrameType::RelayToClientDatagram
     /// [`RelayToClientDatagramBatch`]: crate::protos::common::FrameType::RelayToClientDatagramBatch
     #[metrics(help = "Number of 'send' packets dropped.")]
     pub send_packets_dropped: Counter,
+    /// Datagram frames dropped because the recipient's send queue was full (a slow reader) or
+    /// already closed (the recipient is disconnecting).
+    #[metrics(
+        help = "Number of 'send' packets dropped because the recipient's send queue was full or closed."
+    )]
+    pub send_packets_dropped_queue: Counter,
 
     /// Intended to count sent frames other than datagrams, but currently unused (never incremented).
     #[metrics(help = "Number of packets sent that were not 'send' packets")]

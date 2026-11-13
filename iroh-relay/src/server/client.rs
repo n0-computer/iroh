@@ -501,11 +501,10 @@ where
                 datagrams,
             } => {
                 let packet_len = datagrams.contents.len();
-                if let Err(err @ ForwardPacketError { .. }) =
-                    self.handle_frame_send_packet(dst_key, datagrams)
-                {
-                    warn!("failed to handle send packet frame: {err:#}");
-                }
+                // A dropped datagram is counted in `send_packets_dropped_queue` and logged at
+                // debug level where it happens; a warning per datagram floods the logs exactly
+                // when the relay is under load.
+                self.handle_frame_send_packet(dst_key, datagrams).ok();
                 self.metrics.bytes_recv.inc_by(packet_len as u64);
             }
             ClientToRelayMsg::Ping(data) => {

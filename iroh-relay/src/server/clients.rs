@@ -220,6 +220,7 @@ impl Clients {
                     dst = %dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
+                metrics.send_packets_dropped_queue.inc();
                 Err(ForwardPacketError::new(SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
@@ -227,6 +228,7 @@ impl Clients {
                     dst = %dst.fmt_short(),
                     "can no longer write to client, dropping message and pruning connection"
                 );
+                metrics.send_packets_dropped_queue.inc();
                 client.active.start_shutdown();
                 Err(ForwardPacketError::new(SendError::Closed))
             }
@@ -340,6 +342,39 @@ mod tests {
         .std_context("timeout")?;
         clients.shutdown().await;
 
+        Ok(())
+    }
+
+    /// Datagrams dropped at a full recipient queue are counted, not just logged.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_full_queue_drops_are_counted() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let a_key = SecretKey::from_bytes(&rng.random()).public();
+        let b_key = SecretKey::from_bytes(&rng.random()).public();
+
+        // `a` never reads, and on this current-thread runtime its actor does not run
+        // during the loop below, so its send queue (capacity 10) fills up.
+        let (builder_a, _a_rw) = test_client_builder(a_key);
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+        clients.register(builder_a, metrics.clone());
+
+        let data = [0u8; 64];
+        let mut failed = 0;
+        for _ in 0..50 {
+            if clients
+                .send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)
+                .is_err()
+            {
+                failed += 1;
+            }
+        }
+        assert!(failed > 0, "the send queue never filled");
+        assert_eq!(metrics.send_packets_dropped_queue.get(), failed);
+        assert_eq!(metrics.send_packets_dropped.get(), 0);
+
+        clients.shutdown().await;
         Ok(())
     }
 
