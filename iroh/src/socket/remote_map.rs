@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll, Waker, ready},
 };
 
-use iroh_base::{CustomAddr, EndpointAddr, EndpointId, RelayUrl};
+use iroh_base::{CustomAddr, EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_future::task::JoinSet;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
@@ -315,6 +315,18 @@ impl RemoteMap {
     ) {
         let EndpointAddr { id, addrs } = addr;
         self.send_to_actor(id, RemoteStateMessage::ResolveRemote(addrs, tx))
+            .await
+    }
+
+    /// Presents `addrs` as additional reachability for `remote_id`: any custom-transport
+    /// addrs are probed on existing connections so a newly-viable custom path opens
+    /// mid-connection instead of needing a redial.
+    pub(super) async fn probe_custom_addrs(
+        &mut self,
+        remote_id: EndpointId,
+        addrs: BTreeSet<TransportAddr>,
+    ) {
+        self.send_to_actor(remote_id, RemoteStateMessage::ProbeCustomAddrs(addrs))
             .await
     }
 

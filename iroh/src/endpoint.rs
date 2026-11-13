@@ -1038,6 +1038,21 @@ impl Endpoint {
         self.inner.remove_external_addr(addr).await
     }
 
+    /// Presents `addrs` as places `remote` may additionally be reachable at.
+    ///
+    /// The addrs are added to the remote's candidate set, and any
+    /// [`TransportAddr::Custom`] ones are probed on existing connections to that
+    /// remote: custom transports have no other path-opening mechanism (IP addrs
+    /// use NAT traversal, relays are dialed directly), so this is how a custom
+    /// path that became viable after connecting gets opened without redialing.
+    /// No-op for a remote with no live connections.
+    pub async fn add_remote_addrs(&self, remote: EndpointId, addrs: BTreeSet<TransportAddr>) {
+        if self.is_closed() {
+            return;
+        }
+        self.inner.probe_custom_addrs(remote, addrs).await;
+    }
+
     // # Methods for establishing connectivity.
 
     /// Connects to a remote [`Endpoint`].
