@@ -1041,6 +1041,56 @@ impl TransportsSender {
         trace!(%network_path, "no valid transport available");
         Poll::Ready(Ok(()))
     }
+
+    /// [`Self::poll_send`], but blackholes: pending transports and send errors are
+    /// reported as a successful send so noq treats the datagram as lost.
+    pub(crate) fn poll_send_lossy(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context,
+        network_path: &FourTuple,
+        transmit: &Transmit<'_>,
+    ) -> Poll<io::Result<()>> {
+        let dst = network_path;
+
+        match self.as_mut().poll_send(cx, network_path, transmit) {
+            Poll::Ready(Ok(())) => {
+                let len = transmit.contents.len();
+                let datagram_count = transmit.datagram_count();
+
+                trace!(%dst, %len, %datagram_count, "sent transmit");
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(ref err)) => {
+                debug!(%dst, "dropped transmit: {err:#}");
+                Poll::Ready(Ok(()))
+            }
+            Poll::Pending => {
+                // We do not want to block the next send which might be on a
+                // different transport.  Instead we let Noq handle this as a lost
+                // datagram.
+                // TODO: Revisit this: we might want to do something better.
+                trace!(%dst, "transport pending, dropped transmit");
+
+                // We drop the transmit, so also cancel any send reservation its pending
+                // transports still hold: a relay send pending in `poll_reserve` would
+                // otherwise keep its reserved slot for as long as this connection lives.
+                // See https://github.com/n0-computer/iroh/issues/4599.
+                self.as_mut().abort_pending();
+
+                Poll::Ready(Ok(()))
+            }
+        }
+    }
+
+    /// Cancels the send state a [`Self::poll_send`] holds while [`Poll::Pending`],
+    /// currently relay send channel slot reservations.
+    ///
+    /// A no-op if nothing is pending, so it is safe to call unconditionally.
+    pub(crate) fn abort_pending(mut self: Pin<&mut Self>) {
+        for sender in self.relay.iter_mut() {
+            sender.abort_send();
+        }
+    }
 }
 
 /// A [`Transports`] that works with [`MultipathMappedAddr`]s and their IPv6 representation.
@@ -1274,29 +1324,7 @@ impl noq::UdpSender for Sender {
         };
         let this = self.project();
 
-        match this.sender.poll_send(cx, &network_path, &transmit) {
-            Poll::Ready(Ok(())) => {
-                trace!(
-                    dst = %network_path,
-                    len = transmit.contents.len(),
-                    datagram_count = transmit.datagram_count(),
-                    "sent transmit"
-                );
-                Poll::Ready(Ok(()))
-            }
-            Poll::Ready(Err(ref err)) => {
-                debug!(dst=%network_path, "dropped transmit: {err:#}");
-                Poll::Ready(Ok(()))
-            }
-            Poll::Pending => {
-                // We do not want to block the next send which might be on a
-                // different transport.  Instead we let Noq handle this as a lost
-                // datagram.
-                // TODO: Revisit this: we might want to do something better.
-                trace!(dst=%network_path, "transport pending, dropped transmit");
-                Poll::Ready(Ok(()))
-            }
-        }
+        this.sender.poll_send_lossy(cx, &network_path, &transmit)
     }
 
     fn max_transmit_segments(&self) -> NonZeroUsize {
@@ -1377,6 +1405,88 @@ mod tests {
             selected.iter().take(4).copied().collect::<Vec<_>>(),
             vec![2, 1, 2, 1],
         );
+    }
+
+    /// Regression test for https://github.com/n0-computer/iroh/issues/4599
+    ///
+    /// A relay transmit dropped on a full channel must release its reservation.
+    #[tokio::test]
+    async fn dropped_relay_transmit_releases_its_reservation() {
+        let (relay_sender, mut relay_receiver) = RelaySender::bounded_for_test(1);
+
+        let transports_sender = TransportsSender {
+            #[cfg(not(wasm_browser))]
+            ip: IpTransports::bind(std::iter::empty(), &EndpointMetrics::default())
+                .expect("test transports must bind")
+                .create_sender(),
+            relay: vec![relay_sender.clone()],
+            custom: Vec::new(),
+            max_transmit_segments: NonZeroUsize::new(1).unwrap(),
+        };
+
+        let mut sender_a = std::pin::pin!(transports_sender);
+        // A second sender sharing the relay send channel, standing in for any other
+        // connection on the endpoint.
+        let mut sender_b = relay_sender;
+
+        let transmit_a1 = test_transmit(b"first");
+        let transmit_a2_dropped = test_transmit(b"dropped");
+        let transmit_b = test_transmit(b"other");
+
+        let url = crate::defaults::staging::default_na_east_relay().url;
+        let endpoint_id = iroh_base::SecretKey::from_bytes(&[2u8; 32]).public();
+        let network_path = FourTuple::Relay {
+            url: url.clone(),
+            endpoint_id,
+        };
+        let noop_waker = futures_util::task::noop_waker();
+        let mut cx = Context::from_waker(&noop_waker);
+
+        // The first transmit fills the relay send channel (capacity 1).
+        assert!(matches!(
+            sender_a
+                .as_mut()
+                .poll_send_lossy(&mut cx, &network_path, &transmit_a1),
+            Poll::Ready(Ok(()))
+        ));
+
+        // The transmit was actually sent, not blackholed: it filled the channel.
+        assert_eq!(relay_receiver.len(), 1);
+
+        // The channel is now full: the pending relay send is dropped, and with it the
+        // reservation it queued on the channel while trying to send `transmit_a2_dropped`
+        assert!(matches!(
+            sender_a
+                .as_mut()
+                .poll_send_lossy(&mut cx, &network_path, &transmit_a2_dropped),
+            Poll::Ready(Ok(()))
+        ));
+
+        // The dropped transmit was blackholed: only the first datagram is queued.
+        assert_eq!(relay_receiver.len(), 1);
+
+        // The relay actor drains the channel, freeing the single channel slot.
+        let drained_a = relay_receiver.recv().await.expect("one datagram queued");
+        assert_eq!(drained_a.datagrams.contents.as_ref(), b"first");
+
+        // The freed slot must be available to any sender, not just to the one
+        // that dropped its transmit. We check that it can be used by `sender_b`
+        assert!(matches!(
+            sender_b.poll_send(&mut cx, url, endpoint_id, &transmit_b),
+            Poll::Ready(Ok(()))
+        ));
+
+        // sender_b's datagram was sent: it is queued on the channel.
+        let drained_b = relay_receiver.recv().await.expect("one datagram queued");
+        assert_eq!(drained_b.datagrams.contents.as_ref(), b"other");
+    }
+
+    fn test_transmit(contents: &[u8]) -> Transmit<'_> {
+        Transmit {
+            ecn: None,
+            contents,
+            segment_size: None,
+        }
     }
 
     fn custom_only_transports(custom: Vec<Box<dyn CustomEndpoint>>) -> Transports {
