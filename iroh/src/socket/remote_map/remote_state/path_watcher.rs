@@ -555,6 +555,15 @@ impl<'conn> PathListStream<'conn> {
         Some(paths)
     }
 
+    /// Waits until the path with `id` is closed and returns the snapshot without it.
+    ///
+    /// Checks the current paths first. Returns `None` if the stream ends first.
+    ///
+    /// This method is cancellation safe.
+    pub async fn wait_closed(&mut self, id: PathId) -> Option<&PathList<'conn>> {
+        self.wait_none(|path| path.id() == id).await
+    }
+
     /// Waits until `f` returns `Some` for the current or a later snapshot.
     ///
     /// Keeps the last checked snapshot in [`Self::next_value`], so cancelling

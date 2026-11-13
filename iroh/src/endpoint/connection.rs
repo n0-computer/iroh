@@ -1746,7 +1746,7 @@ mod tests {
 
         // A pending wait wakes when its matching path disappears.
         {
-            let wait = paths_client.wait_none(|path| path.id() == direct_id);
+            let wait = paths_client.wait_closed(direct_id);
             tokio::pin!(wait);
             assert!(now_or_never(wait.as_mut()).is_none());
             conn_client
@@ -1757,7 +1757,7 @@ mod tests {
                 .anyerr()?;
             tokio::time::timeout(Duration::from_secs(10), wait)
                 .await
-                .expect("wait_none did not wake after closing the path")
+                .expect("wait_closed did not wake after closing the path")
                 .context("path stream ended")?;
         }
         assert!(conn_client.paths().get(direct_id).is_none());

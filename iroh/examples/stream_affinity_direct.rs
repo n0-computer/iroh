@@ -93,11 +93,7 @@ async fn run_alice(conn: Connection) -> Result<()> {
     // affinity to blocked before we have a direct path we will already be consuming
     // connection-wide send window capacity for a stream that can not send anyway. So we
     // prefer to delay opening the stream.
-    let direct_path = paths_watcher
-        .wait_any(|p| p.is_ip())
-        .await
-        .context("path stream ended")?
-        .id();
+    let direct_path = paths_watcher.wait_any(|p| p.is_ip()).await.anyerr().id();
 
     // Create a SendStream and make it stick to a direct path.
     println!("stream sticks to direct path {direct_path}");
@@ -112,14 +108,13 @@ async fn run_alice(conn: Connection) -> Result<()> {
     // protocol agreement. So we can not stop this task before we get this signal as before
     // that we might still need to retransmit data even though we already called
     // SendStream::finish.
-    let _watcher = AbortOnDropHandle::new(tokio::spawn({
+    let _watcher: AbortOnDropHandle<Result<()>> = AbortOnDropHandle::new(tokio::spawn({
         let conn = conn.clone();
         let send_stream = send_stream.clone();
         async move {
             let mut direct_path = direct_path;
             let mut paths_watcher = conn.paths_stream();
-            // Only change the sticky path if the current direct path goes away.
-            while let Some(paths) = paths_watcher.wait_none(|p| p.id() == direct_path).await {
+            while let Some(paths) = paths_watcher.wait_closed(direct_path).await {
                 direct_path = if let Some(path) = paths.iter().find(|p| p.is_ip()) {
                     // A new direct path is already available. Use it.
                     path.id()
@@ -134,7 +129,7 @@ async fn run_alice(conn: Connection) -> Result<()> {
                     .set_affinity(StreamAffinity::Sticky(direct_path))
                     .anyerr()?;
             }
-            n0_error::Ok(())
+            Ok(())
         }
     }));
 
