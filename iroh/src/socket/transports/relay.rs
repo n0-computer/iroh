@@ -323,6 +323,11 @@ impl RelaySender {
             ))),
         }
     }
+
+    /// Aborts an in-progress [`Self::poll_send`], if any.
+    pub(super) fn abort_send(&mut self) {
+        self.sender.abort_send();
+    }
 }
 
 /// Translate a UDP transmit to the `Datagrams` type for sending over the relay.
