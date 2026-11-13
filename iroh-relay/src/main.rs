@@ -30,6 +30,15 @@ use tracing_subscriber::{EnvFilter, prelude::*};
 use url::Url;
 use webpki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 
+/// mimalloc as the global allocator.
+///
+/// The relay allocates and frees buffers across worker threads for every forwarded
+/// datagram. musl's malloc serializes that on one global lock, which dominates a busy
+/// static musl relay; mimalloc uses thread-local heaps.
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
 /// The header name for setting the endpoint id in HTTP auth requests.
