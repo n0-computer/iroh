@@ -1187,8 +1187,8 @@ impl Connection<HandshakeCompleted> {
 
     /// Returns a stream of [`PathList`] snapshots for this connection.
     ///
-    /// Yields the current snapshot on the first poll, and a fresh
-    /// snapshot whenever the open paths or the selected path change.
+    /// Yields a snapshot taken at creation, then a fresh one whenever
+    /// the open paths or the selected path change.
     /// Ends when the connection closes.
     ///
     /// The stream borrows this [`Connection`]. To consume it from a
@@ -1362,12 +1362,12 @@ impl WeakConnectionHandle {
 
 #[cfg(all(test, with_crypto_provider))]
 mod tests {
-    use std::time::Duration;
+    use std::{net::Ipv4Addr, time::Duration};
 
     use iroh_base::{EndpointAddr, SecretKey};
     use iroh_relay::tls::CaTlsConfig;
     use n0_error::{Result, StackResultExt, StdResultExt};
-    use n0_future::{Stream, StreamExt};
+    use n0_future::{Stream, StreamExt, future::now_or_never};
     use n0_tracing_test::traced_test;
     use rand::{RngExt, SeedableRng};
     use tracing::{Instrument, error_span, info, info_span, trace_span};
@@ -1375,7 +1375,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, PathList, ZeroRttStatus, presets},
+        endpoint::{ConnectOptions, Connection, Incoming, PathList, ZeroRttStatus, presets},
         test_utils::run_relay_server,
     };
 
@@ -1589,17 +1589,26 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    #[traced_test]
-    async fn test_paths_watcher() -> Result {
+    /// Connects a client to a server, both using a local relay.
+    ///
+    /// Binds only to `127.0.0.1`, so there is a single direct path.
+    async fn connect_with_relay() -> Result<(
+        iroh_relay::server::Server,
+        Endpoint,
+        Endpoint,
+        Connection,
+        Connection,
+    )> {
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, relay) = run_relay_server().await?;
         let server = Endpoint::builder(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
             .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![ALPN.to_vec()])
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
             .await?;
 
@@ -1607,6 +1616,8 @@ mod tests {
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .secret_key(SecretKey::from_bytes(&rng.random()))
             .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
             .await?;
 
@@ -1620,6 +1631,13 @@ mod tests {
             async { server.accept().await.unwrap().await.unwrap() }
         );
         info!("connected");
+        Ok((relay, server, client, conn_client, conn_server))
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_paths_watcher() -> Result {
+        let (_guard, server, client, conn_client, conn_server) = connect_with_relay().await?;
 
         let mut paths_client = conn_client.paths_stream();
         let mut paths_server = conn_server.paths_stream();
@@ -1676,6 +1694,82 @@ mod tests {
         server.close().await;
         client.close().await;
 
+        Ok(())
+    }
+
+    /// Tests the [`PathListStream`] wait helpers.
+    ///
+    /// iroh has no API to close a single path, so the test closes the direct path
+    /// through the inner `noq` connection.
+    ///
+    /// [`PathListStream`]: crate::endpoint::PathListStream
+    #[tokio::test]
+    #[traced_test]
+    async fn test_paths_wait_helpers() -> Result {
+        let (_guard, server, client, conn, _conn_server) = connect_with_relay().await?;
+        let mut paths = conn.paths_stream();
+
+        // noq refuses to close the last path, so wait for a relay path as well.
+        let timeout = Duration::from_secs(10);
+        tokio::time::timeout(timeout, paths.wait_any(|p| p.is_relay()))
+            .await
+            .anyerr()?
+            .context("path stream ended")?;
+        let direct_id = tokio::time::timeout(timeout, paths.wait_any(|p| p.is_ip()))
+            .await
+            .anyerr()?
+            .context("path stream ended")?
+            .id();
+
+        // Cancelled waits do not consume the current snapshot.
+        assert!(now_or_never(paths.wait_closed(direct_id)).is_none());
+        assert!(now_or_never(paths.wait_any(|_| false)).is_none());
+        let snapshot = now_or_never(paths.next())
+            .flatten()
+            .context("no snapshot")?;
+        assert!(snapshot.get(direct_id).is_some());
+
+        // Waits check the current state first, and the stream yields their snapshot again.
+        let snapshot = now_or_never(paths.wait_none(|_| false))
+            .flatten()
+            .context("wait_none did not complete immediately")?;
+        assert!(snapshot.get(direct_id).is_some());
+        let snapshot = now_or_never(paths.next())
+            .flatten()
+            .context("no snapshot")?;
+        assert!(snapshot.get(direct_id).is_some());
+
+        // A pending wait wakes when its path closes.
+        {
+            let wait = paths.wait_closed(direct_id);
+            tokio::pin!(wait);
+            assert!(now_or_never(wait.as_mut()).is_none());
+            // No iroh API closes a single path, so use the inner noq connection.
+            conn.inner
+                .path(direct_id)
+                .context("direct path is not open")?
+                .close()
+                .anyerr()?;
+            tokio::time::timeout(timeout, wait)
+                .await
+                .anyerr()?
+                .context("path stream ended")?;
+        }
+
+        // Once the connection closes, the stream and the waits keep returning `None`.
+        conn.close(0u32.into(), b"");
+        let ended = tokio::time::timeout(timeout, paths.wait_any(|_| false))
+            .await
+            .anyerr()?;
+        assert!(ended.is_none());
+        assert!(matches!(now_or_never(paths.next()), Some(None)));
+        assert!(matches!(
+            now_or_never(paths.wait_none(|_| false)),
+            Some(None)
+        ));
+
+        server.close().await;
+        client.close().await;
         Ok(())
     }
 }
