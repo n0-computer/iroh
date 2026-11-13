@@ -29,7 +29,7 @@ use iroh::{
     Endpoint,
     endpoint::{Connection, ConnectionError, presets},
 };
-use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
+use n0_error::{Result, StdResultExt, anyerr, ensure_any};
 use n0_future::{StreamExt, task::AbortOnDropHandle};
 use noq::StreamAffinity;
 
@@ -93,7 +93,7 @@ async fn run_alice(conn: Connection) -> Result<()> {
     // affinity to blocked before we have a direct path we will already be consuming
     // connection-wide send window capacity for a stream that can not send anyway. So we
     // prefer to delay opening the stream.
-    let direct_path = paths_watcher.wait_any(|p| p.is_ip()).await.anyerr().id();
+    let direct_path = paths_watcher.wait_any(|p| p.is_ip()).await.anyerr()?.id();
 
     // Create a SendStream and make it stick to a direct path.
     println!("stream sticks to direct path {direct_path}");

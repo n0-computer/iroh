@@ -509,9 +509,6 @@ impl<'conn> Path<'conn> {
 pub struct PathListStream<'conn> {
     shared: &'conn Shared,
     conn: &'conn noq::Connection,
-    /// Resolves on the next state change.
-    ///
-    /// Never enabled: [`Notify::notify_waiters`] also wakes unpolled futures.
     notified: Pin<Box<Notified<'conn>>>,
     /// The latest snapshot, if not yet yielded.
     ///

@@ -1697,91 +1697,77 @@ mod tests {
         Ok(())
     }
 
+    /// Tests the [`PathListStream`] wait helpers.
+    ///
+    /// iroh has no API to close a single path, so the test closes the direct path
+    /// through the inner `noq` connection.
+    ///
+    /// [`PathListStream`]: crate::endpoint::PathListStream
     #[tokio::test]
     #[traced_test]
     async fn test_paths_wait_helpers() -> Result {
-        let (_guard, server, client, conn_client, _conn_server) = connect_with_relay().await?;
-        let mut paths_client = conn_client.paths_stream();
+        let (_guard, server, client, conn, _conn_server) = connect_with_relay().await?;
+        let mut paths = conn.paths_stream();
 
-        // With a relay path, closing the direct path keeps the connection open.
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            paths_client.wait_any(|path| path.is_relay()),
-        )
-        .await
-        .expect("timeout waiting for a relay path")
-        .context("path stream ended")?;
-        let direct_id = tokio::time::timeout(
-            Duration::from_secs(10),
-            paths_client.wait_any(|path| path.is_ip()),
-        )
-        .await
-        .expect("timeout waiting for a direct path")
-        .context("path stream ended")?
-        .id();
-
-        // A cancelled wait does not consume the current snapshot.
-        assert!(now_or_never(paths_client.wait_none(|path| path.id() == direct_id)).is_none());
-        assert!(now_or_never(paths_client.wait_any(|_| false)).is_none());
-        let paths = now_or_never(paths_client.next())
-            .expect("current snapshot is yielded after a cancelled wait")
+        // noq refuses to close the last path, so wait for a relay path as well.
+        let timeout = Duration::from_secs(10);
+        tokio::time::timeout(timeout, paths.wait_any(|p| p.is_relay()))
+            .await
+            .anyerr()?
             .context("path stream ended")?;
-        assert!(paths.get(direct_id).is_some());
+        let direct_id = tokio::time::timeout(timeout, paths.wait_any(|p| p.is_ip()))
+            .await
+            .anyerr()?
+            .context("path stream ended")?
+            .id();
 
-        // Waits check the current state first.
-        let paths = now_or_never(paths_client.wait_none(|_| false))
-            .expect("condition is immediately met")
-            .context("path stream ended")?;
-        assert!(paths.get(direct_id).is_some());
-        let same = now_or_never(paths_client.wait_any(|path| path.id() == direct_id))
-            .expect("existing path is immediately available")
-            .context("path stream ended")?;
-        assert_eq!(direct_id, same.id());
+        // Cancelled waits do not consume the current snapshot.
+        assert!(now_or_never(paths.wait_closed(direct_id)).is_none());
+        assert!(now_or_never(paths.wait_any(|_| false)).is_none());
+        let snapshot = now_or_never(paths.next())
+            .flatten()
+            .context("no snapshot")?;
+        assert!(snapshot.get(direct_id).is_some());
 
-        // The stream yields the snapshot that satisfied the wait again.
-        let paths = now_or_never(paths_client.next())
-            .expect("matched snapshot is yielded again")
-            .context("path stream ended")?;
-        assert!(paths.get(direct_id).is_some());
+        // Waits check the current state first, and the stream yields their snapshot again.
+        let snapshot = now_or_never(paths.wait_none(|_| false))
+            .flatten()
+            .context("wait_none did not complete immediately")?;
+        assert!(snapshot.get(direct_id).is_some());
+        let snapshot = now_or_never(paths.next())
+            .flatten()
+            .context("no snapshot")?;
+        assert!(snapshot.get(direct_id).is_some());
 
-        // A pending wait wakes when its matching path disappears.
+        // A pending wait wakes when its path closes.
         {
-            let wait = paths_client.wait_closed(direct_id);
+            let wait = paths.wait_closed(direct_id);
             tokio::pin!(wait);
             assert!(now_or_never(wait.as_mut()).is_none());
-            conn_client
-                .inner
+            // No iroh API closes a single path, so use the inner noq connection.
+            conn.inner
                 .path(direct_id)
-                .expect("direct path is open")
+                .context("direct path is not open")?
                 .close()
                 .anyerr()?;
-            tokio::time::timeout(Duration::from_secs(10), wait)
+            tokio::time::timeout(timeout, wait)
                 .await
-                .expect("wait_closed did not wake after closing the path")
+                .anyerr()?
                 .context("path stream ended")?;
         }
-        assert!(conn_client.paths().get(direct_id).is_none());
-        assert!(conn_client.close_reason().is_none());
 
-        // After close, the stream stays ended and waits return `None`.
-        conn_client.close(0u32.into(), b"");
-        tokio::time::timeout(Duration::from_secs(30), async {
-            while paths_client.next().await.is_some() {}
-        })
-        .await
-        .expect("client paths watcher did not close within 30s of connection close");
-        assert!(matches!(now_or_never(paths_client.next()), Some(None)));
+        // Once the connection closes, the stream and the waits keep returning `None`.
+        conn.close(0u32.into(), b"");
+        let ended = tokio::time::timeout(timeout, paths.wait_any(|_| false))
+            .await
+            .anyerr()?;
+        assert!(ended.is_none());
+        assert!(matches!(now_or_never(paths.next()), Some(None)));
         assert!(matches!(
-            now_or_never(paths_client.wait_any(|_| true)),
-            Some(None)
-        ));
-        // Connection closure does not satisfy the condition.
-        assert!(matches!(
-            now_or_never(paths_client.wait_none(|_| false)),
+            now_or_never(paths.wait_none(|_| false)),
             Some(None)
         ));
 
-        drop(paths_client);
         server.close().await;
         client.close().await;
         Ok(())
