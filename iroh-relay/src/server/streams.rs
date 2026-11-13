@@ -12,7 +12,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::watch,
 };
-use tracing::{instrument, warn};
+use tracing::warn;
 
 use super::{ClientRateLimit, Metrics};
 use crate::{
@@ -563,7 +563,6 @@ impl<S: ExportKeyingMaterial> ExportKeyingMaterial for RateLimited<S> {
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for RateLimited<S> {
-    #[instrument(name = "rate_limited_poll_read", skip_all)]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
