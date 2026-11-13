@@ -36,6 +36,13 @@ use crate::{
     },
 };
 
+/// Most datagram frames written to a client per flush.
+///
+/// The actor queues every packet already waiting, up to this many, and then flushes once, so a
+/// burst costs one TLS record and one write instead of one of each per datagram. The cap keeps
+/// a busy client's actor from starving its own reads.
+const MAX_PACKETS_PER_FLUSH: usize = 32;
+
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]
 pub(super) struct Packet {
@@ -412,6 +419,16 @@ where
                     self.send_packet(packet)
                         .await
                         .map_err(|err| e!(RunError::PacketSend, err))?;
+                    // Queue the packets that are already waiting too; the flush below
+                    // writes them all at once.
+                    for _ in 1..MAX_PACKETS_PER_FLUSH {
+                        let Ok(packet) = self.packet_send_queue.try_recv() else {
+                            break;
+                        };
+                        self.send_packet(packet)
+                            .await
+                            .map_err(|err| e!(RunError::PacketSend, err))?;
+                    }
                 }
                 // Last priority, sending other message
                 message = self.message_send_queue.recv() => {
@@ -436,25 +453,28 @@ where
                 }
             }
 
-            self.stream
-                .flush()
+            // Writes out every frame queued in this iteration. Bounded by the write timeout,
+            // like each frame was when it was flushed on its own.
+            tokio::time::timeout(self.timeout, self.stream.flush())
                 .await
+                .map_err(|_| e!(RunError::TickFlush))?
                 .map_err(|_| e!(RunError::TickFlush))?;
         }
         Ok(())
     }
 
-    /// Writes the given frame to the connection.
+    /// Queues the given frame on the connection, without flushing.
     ///
-    /// Errors if the send does not happen within the `timeout` duration
+    /// The actor loop flushes once per iteration. Errors if queueing does not complete within
+    /// the `timeout` duration; that wait only happens once the stream's write buffer is full.
     async fn write_frame(&mut self, frame: RelayToClientMsg) -> Result<(), WriteFrameError> {
-        tokio::time::timeout(self.timeout, self.stream.send(frame)).await??;
+        tokio::time::timeout(self.timeout, self.stream.feed(frame)).await??;
         Ok(())
     }
 
-    /// Writes contents to the client in a `RECV_PACKET` frame.
+    /// Queues contents for the client in a `RECV_PACKET` frame.
     ///
-    /// Errors if the send does not happen within the `timeout` duration
+    /// Errors if queueing does not complete within the `timeout` duration.
     /// Does not flush.
     async fn send_raw(&mut self, packet: Packet) -> Result<(), WriteFrameError> {
         let remote_endpoint_id = packet.src;

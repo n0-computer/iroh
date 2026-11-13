@@ -378,6 +378,41 @@ mod tests {
         Ok(())
     }
 
+    /// A burst that is already queued when the actor wakes is written in one batch, with
+    /// every datagram delivered in order.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_queued_burst_delivered_in_order() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let a_key = SecretKey::from_bytes(&rng.random()).public();
+        let b_key = SecretKey::from_bytes(&rng.random()).public();
+
+        let (builder_a, mut a_rw) = test_client_builder(a_key);
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+        clients.register(builder_a, metrics.clone());
+
+        // Fill the whole queue (capacity 10) before the actor gets to run.
+        const BURST: u8 = 10;
+        for i in 0..BURST {
+            clients.send_packet(a_key, Datagrams::from(&[i; 16][..]), b_key, &metrics)?;
+        }
+        for i in 0..BURST {
+            let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a_rw).await?;
+            assert_eq!(
+                frame,
+                RelayToClientMsg::Datagrams {
+                    remote_endpoint_id: b_key,
+                    datagrams: vec![i; 16].into(),
+                }
+            );
+        }
+        assert_eq!(metrics.send_packets_sent.get(), u64::from(BURST));
+
+        clients.shutdown().await;
+        Ok(())
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_clients_same_endpoint_id() -> Result {
