@@ -24,7 +24,7 @@ use hyper::{
 use n0_error::{e, ensure, stack_error};
 use n0_future::MaybeFuture;
 use tokio::{
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpSocket, TcpStream},
     sync::{Notify, watch},
     time::Instant,
 };
@@ -38,7 +38,9 @@ use super::{
 };
 use crate::{
     KeyCache,
-    defaults::{DEFAULT_KEY_CACHE_CAPACITY, timeouts::SERVER_WRITE_TIMEOUT},
+    defaults::{
+        DEFAULT_KEY_CACHE_CAPACITY, DEFAULT_LISTEN_BACKLOG, timeouts::SERVER_WRITE_TIMEOUT,
+    },
     http::{
         CLIENT_AUTH_HEADER, ProtocolVersion, RELAY_RELATIVE_PATH, SUPPORTED_WEBSOCKET_VERSION,
         WEBSOCKET_UPGRADE_PROTOCOL,
@@ -351,10 +353,27 @@ pub(super) struct ServerBuilder {
     client_rx_ratelimit: Option<ClientRateLimit>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
+    /// Listen backlog of the TCP listener.
+    listen_backlog: u32,
     /// Access control for endpoints.
     access: Arc<dyn DynAccessControl>,
     metrics: Option<Arc<Metrics>>,
     establish_timeout: Duration,
+}
+
+/// Binds a TCP listener on `addr` with a listen queue of `backlog`.
+///
+/// Like [`TcpListener::bind`], which always listens with 128, except for the backlog.
+/// Must be called inside a tokio runtime.
+pub(super) fn bind_listener(addr: SocketAddr, backlog: u32) -> std::io::Result<TcpListener> {
+    let socket = match addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4()?,
+        SocketAddr::V6(_) => TcpSocket::new_v6()?,
+    };
+    #[cfg(not(windows))]
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
+    socket.listen(backlog)
 }
 
 impl ServerBuilder {
@@ -367,6 +386,7 @@ impl ServerBuilder {
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
+            listen_backlog: DEFAULT_LISTEN_BACKLOG,
             access: Arc::new(AllowAll),
             metrics: None,
             establish_timeout: ESTABLISH_TIMEOUT,
@@ -439,8 +459,16 @@ impl ServerBuilder {
         self
     }
 
+    /// Sets the listen backlog of the TCP listener.
+    pub(super) fn listen_backlog(mut self, backlog: u32) -> Self {
+        self.listen_backlog = backlog;
+        self
+    }
+
     /// Builds and spawns an HTTP(S) Relay Server.
-    pub(super) async fn spawn(self) -> Result<Server, SpawnError> {
+    ///
+    /// Must be called inside a tokio runtime.
+    pub(super) fn spawn(self) -> Result<Server, SpawnError> {
         let cancel_token = CancellationToken::new();
 
         let service = RelayService::new(
@@ -457,8 +485,7 @@ impl ServerBuilder {
 
         // Bind a TCP listener on `addr` and handles content using HTTPS.
 
-        let listener = TcpListener::bind(&addr)
-            .await
+        let listener = bind_listener(addr, self.listen_backlog)
             .map_err(|err| e!(super::SpawnError::BindTcpListener { addr }, err))?;
 
         let addr = listener
@@ -1261,6 +1288,35 @@ mod tests {
         TlsConfig::new(Arc::new(config))
     }
 
+    /// Linux completes at most `backlog + 1` handshakes that are not yet accepted,
+    /// then drops further SYNs, so a sequential connect beyond that times out.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[traced_test]
+    async fn test_listen_backlog() -> Result {
+        const BACKLOG: u32 = 4;
+        const MAX_CLIENTS: usize = 64;
+
+        let listener =
+            bind_listener((std::net::Ipv4Addr::LOCALHOST, 0).into(), BACKLOG).anyerr()?;
+        let addr = listener.local_addr().anyerr()?;
+
+        let mut streams = Vec::new();
+        while streams.len() < MAX_CLIENTS {
+            let connect = TcpStream::connect(addr);
+            match tokio::time::timeout(Duration::from_millis(250), connect).await {
+                Ok(stream) => streams.push(stream.anyerr()?),
+                Err(_elapsed) => break,
+            }
+        }
+        let queued = streams.len() as u32;
+        assert!(
+            (BACKLOG..=BACKLOG + 1).contains(&queued),
+            "accept queue held {queued} connections for backlog {BACKLOG}"
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_http_clients_and_server() -> Result {
@@ -1270,9 +1326,7 @@ mod tests {
         let b_key = SecretKey::from_bytes(&rng.random());
 
         // start server
-        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-            .spawn()
-            .await?;
+        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap()).spawn()?;
 
         let addr = server.addr();
 
@@ -1384,9 +1438,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_subprotocol_negotiation_picks_latest() -> Result {
-        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-            .spawn()
-            .await?;
+        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap()).spawn()?;
         let addr = server.addr();
 
         for offered in [
@@ -1432,8 +1484,7 @@ mod tests {
         // start server
         let mut server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .tls_config(Some(tls_config))
-            .spawn()
-            .await?;
+            .spawn()?;
 
         let addr = server.addr();
 
@@ -1792,8 +1843,7 @@ mod tests {
         // Start server with a very short establish timeout.
         let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .establish_timeout(Duration::from_millis(500))
-            .spawn()
-            .await?;
+            .spawn()?;
 
         let addr = server.addr();
         let port = addr.port();

@@ -56,6 +56,7 @@ pub fn relay_config() -> RelayConfig {
         tls: Some(tls_config()),
         limits: Default::default(),
         key_cache_capacity: Some(1024),
+        listen_backlog: None,
         access: Arc::new(AllowAll),
     }
 }

@@ -160,6 +160,10 @@ struct Config {
     metrics_bind_addr: Option<SocketAddr>,
     /// The capacity of the key cache.
     key_cache_capacity: Option<usize>,
+    /// Listen backlog of the relay's TCP listeners.
+    ///
+    /// Defaults to 4096; Linux caps it at `net.core.somaxconn`.
+    listen_backlog: Option<u32>,
     /// Access control for relaying connections.
     ///
     /// This controls which endpoints are allowed to relay connections, other endpoints are not controlled by this.
@@ -372,6 +376,7 @@ impl Default for Config {
             enable_metrics: cfg_defaults::enable_metrics(),
             metrics_bind_addr: None,
             key_cache_capacity: Default::default(),
+            listen_backlog: None,
             access: AccessConfig::Everyone,
         }
     }
@@ -778,6 +783,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig> {
         relay_config.tls = tls_config;
         relay_config.limits = limits;
         relay_config.key_cache_capacity = cfg.key_cache_capacity;
+        relay_config.listen_backlog = cfg.listen_backlog;
         relay_config.access = cfg.access.clone().try_into()?;
         Some(relay_config)
     } else {

@@ -22,6 +22,13 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 /// which seems reasonable for a server.
 pub const DEFAULT_KEY_CACHE_CAPACITY: usize = 1024 * 1024;
 
+/// The default listen backlog of the relay server's TCP listeners.
+///
+/// tokio and std listen with 128, which overflows when many clients reconnect at once, for
+/// example after a relay restart, and the backlog also bounds the SYN queue. Linux caps the
+/// effective value at `net.core.somaxconn` (4096 by default).
+pub const DEFAULT_LISTEN_BACKLOG: u32 = 4096;
+
 /// Contains all timeouts that we use in `iroh`.
 #[cfg(not(wasm_browser))]
 pub mod timeouts {

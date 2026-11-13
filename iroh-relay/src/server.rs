@@ -56,7 +56,7 @@ use tracing::{Instrument, debug, error, info, info_span, instrument};
 
 use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
-    defaults::DEFAULT_KEY_CACHE_CAPACITY,
+    defaults::{DEFAULT_KEY_CACHE_CAPACITY, DEFAULT_LISTEN_BACKLOG},
     http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_RELATIVE_PATH},
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
     tls::CaTlsConfig,
@@ -143,6 +143,10 @@ pub struct RelayConfig {
     pub limits: Limits,
     /// Key cache capacity.
     pub key_cache_capacity: Option<usize>,
+    /// Listen backlog of the relay's TCP listeners.
+    ///
+    /// Defaults to [`DEFAULT_LISTEN_BACKLOG`].
+    pub listen_backlog: Option<u32>,
     /// Access control for incoming connections.
     pub access: Arc<dyn DynAccessControl>,
 }
@@ -150,8 +154,8 @@ pub struct RelayConfig {
 impl RelayConfig {
     /// Creates a new [`RelayConfig`] bound to `http_bind_addr` with default settings.
     ///
-    /// TLS is disabled, default [`Limits`] are used, the key cache capacity is unset, and
-    /// access defaults to [`AllowAll`]. Adjust any of these by assigning to the
+    /// TLS is disabled, default [`Limits`] are used, the key cache capacity and listen backlog
+    /// are unset, and access defaults to [`AllowAll`]. Adjust any of these by assigning to the
     /// corresponding fields after construction.
     pub fn new(http_bind_addr: impl Into<SocketAddr>) -> Self {
         Self {
@@ -159,6 +163,7 @@ impl RelayConfig {
             tls: None,
             limits: Limits::default(),
             key_cache_capacity: None,
+            listen_backlog: None,
             access: Arc::new(AllowAll),
         }
     }
@@ -729,10 +734,14 @@ impl Server {
                 let key_cache_capacity = relay_config
                     .key_cache_capacity
                     .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
+                let listen_backlog = relay_config
+                    .listen_backlog
+                    .unwrap_or(DEFAULT_LISTEN_BACKLOG);
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .metrics(metrics.server.clone())
                     .headers(headers)
                     .key_cache_capacity(key_cache_capacity)
+                    .listen_backlog(listen_backlog)
                     .access(relay_config.access)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
@@ -802,9 +811,9 @@ impl Server {
 
                         // Some services always need to be served over HTTP without TLS.  Run
                         // these standalone.
-                        let http_listener = TcpListener::bind(&relay_config.http_bind_addr)
-                            .await
-                            .map_err(|err| e!(SpawnError::BindTlsListener, err))?;
+                        let http_listener =
+                            http_server::bind_listener(relay_config.http_bind_addr, listen_backlog)
+                                .map_err(|err| e!(SpawnError::BindTlsListener, err))?;
                         let http_addr = http_listener
                             .local_addr()
                             .map_err(|err| e!(SpawnError::NoLocalAddr, err))?;
@@ -828,7 +837,7 @@ impl Server {
                         (None, None)
                     }
                 };
-                let relay_server = builder.spawn().await?;
+                let relay_server = builder.spawn()?;
                 (Some(relay_server), http_addr, tls_config)
             }
             None => (None, None, None),
