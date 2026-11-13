@@ -48,6 +48,7 @@ use crate::{
     },
     socket::{
         RemoteStateActorStoppedError,
+        mapped_addrs::ConnectionAttempt,
         remote_map::{PathEventStream, PathList, PathListStream, PathStateReceiver},
         transports::{self, LocalTransportAddr},
     },
@@ -236,7 +237,7 @@ impl IntoFuture for Incoming {
     fn into_future(self) -> Self::IntoFuture {
         IncomingFuture(Box::pin(async move {
             let noq_conn = self.inner.into_future().await?;
-            let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
+            let conn = conn_from_noq_conn(noq_conn, &self.ep, None)?.await?;
             Ok(conn)
         }))
     }
@@ -317,6 +318,7 @@ pub enum AuthenticationError {
 fn conn_from_noq_conn(
     conn: noq::Connection,
     ep: &Endpoint,
+    attempt: Option<ConnectionAttempt>,
 ) -> Result<
     impl Future<Output = Result<Connection, ConnectingError>> + Send + 'static,
     ConnectingError,
@@ -350,6 +352,7 @@ fn conn_from_noq_conn(
     let inner = ep.inner.clone();
     Ok(async move {
         let paths = fut.await?;
+        drop(attempt);
         let conn = Connection {
             data: HandshakeCompletedData { info, paths },
             inner: conn,
@@ -418,6 +421,8 @@ fn remote_id_from_noq_conn(conn: &noq::Connection) -> Result<EndpointId, RemoteE
 #[derive(derive_more::Debug)]
 pub struct Connecting {
     inner: noq::Connecting,
+    /// Keeps this attempt's address alive and cancels fallback sends when it finishes.
+    attempt: Option<ConnectionAttempt>,
     /// Future to register the connection with the socket.
     ///
     /// This is set and polled after `inner` completes. We are using an option instead of an enum
@@ -486,9 +491,11 @@ impl Connecting {
         inner: noq::Connecting,
         ep: Endpoint,
         remote_endpoint_id: EndpointId,
+        attempt: ConnectionAttempt,
     ) -> Self {
         Self {
             inner,
+            attempt: Some(attempt),
             ep,
             remote_endpoint_id,
             register_with_socket: None,
@@ -538,7 +545,7 @@ impl Connecting {
                     let noq_conn = noq_conn.clone();
                     async move {
                         let accepted = zrtt_accepted.await;
-                        let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
+                        let conn = conn_from_noq_conn(noq_conn, &self.ep, self.attempt)?.await?;
                         Ok(match accepted {
                             true => ZeroRttStatus::Accepted(conn),
                             false => ZeroRttStatus::Rejected(conn),
@@ -579,8 +586,13 @@ impl Future for Connecting {
             if let Some(fut) = &mut self.register_with_socket {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
-                let noq_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                let fut = conn_from_noq_conn(noq_conn, &self.ep)?;
+                let result = std::task::ready!(self.inner.poll_unpin(cx));
+                if result.is_err() {
+                    self.attempt.take();
+                }
+                let noq_conn = result?;
+                let attempt = self.attempt.take();
+                let fut = conn_from_noq_conn(noq_conn, &self.ep, attempt)?;
                 self.register_with_socket = Some(Box::pin(fut.err_into()));
             }
         }
@@ -633,7 +645,7 @@ impl Accepting {
             let noq_conn = noq_conn.clone();
             async move {
                 let _ = zrtt_accepted.await;
-                let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
+                let conn = conn_from_noq_conn(noq_conn, &self.ep, None)?.await?;
                 Ok(conn)
             }
         });
@@ -677,7 +689,7 @@ impl Future for Accepting {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
                 let noq_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                match conn_from_noq_conn(noq_conn, &self.ep) {
+                match conn_from_noq_conn(noq_conn, &self.ep, None) {
                     Err(err) => return Poll::Ready(Err(err)),
                     Ok(fut) => self.register_with_socket = Some(Box::pin(fut.err_into())),
                 };

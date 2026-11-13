@@ -36,6 +36,7 @@ use crate::{
     endpoint::DirectAddr,
     socket::{
         Metrics as SocketMetrics, RELAY_PATH_MAX_IDLE_TIMEOUT,
+        mapped_addrs::EndpointIdMappedAddr,
         remote_map::remote_state::path_watcher::PathStateSender,
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -44,6 +45,9 @@ use crate::{
 mod path_state;
 mod path_watcher;
 mod remote_info;
+
+#[cfg(all(test, not(wasm_browser), with_crypto_provider))]
+mod handshake_tests;
 
 /// How often to attempt holepunching.
 ///
@@ -76,6 +80,19 @@ const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 // QUIC retransmits dropped Initials; a blocked transport must not retain them indefinitely.
 const DATAGRAM_SEND_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_DATAGRAM_SEND_TASKS: usize = 16;
+
+/// Give an existing path a head start without waiting for an old connection to time out.
+const HANDSHAKE_FALLBACK_DELAY: Duration = Duration::from_millis(250);
+
+struct PendingHandshake {
+    fallback_at: Instant,
+    finished: CancellationToken,
+}
+
+enum HandshakeEvent {
+    Fallback(EndpointIdMappedAddr),
+    Finished(EndpointIdMappedAddr),
+}
 
 /// A stream of events from all paths for all connections.
 ///
@@ -170,6 +187,10 @@ struct State {
     /// Stream of Address Lookup results, or always pending if Address Lookup is not running.
     address_lookup_stream: Option<BoxStream<Result<AddressLookupItem, AddressLookupFailed>>>,
 
+    /// Outgoing attempts are independent of the already established connections.
+    handshakes: FxHashMap<EndpointIdMappedAddr, PendingHandshake>,
+    handshake_events: FuturesUnordered<Boxed<HandshakeEvent>>,
+
     /// The path selector used to pick the preferred path among the candidates.
     path_selector: Arc<dyn PathSelector>,
 }
@@ -202,6 +223,8 @@ impl RemoteStateActor {
                 scheduled_open_path: None,
                 pending_open_paths: VecDeque::new(),
                 address_lookup_stream: None,
+                handshakes: Default::default(),
+                handshake_events: Default::default(),
                 path_selector,
             },
         }
@@ -282,6 +305,9 @@ impl RemoteStateActor {
                         None => break,
                     }
                 }
+                Some(event) = self.state.handshake_events.next(), if !self.state.handshake_events.is_empty() => {
+                    self.state.handle_handshake_event(event);
+                }
                 Some((id, evt)) = self.state.path_events.next() => {
                     self.handle_path_event(id, evt);
                 }
@@ -345,6 +371,7 @@ impl RemoteStateActor {
     /// Returns `true` if the actor is fully idle.
     fn is_idle(&self, inbox: &mpsc::Receiver<RemoteStateMessage>) -> bool {
         self.connections.is_empty()
+            && self.state.handshakes.is_empty()
             && inbox.is_empty()
             && self.state.paths.resolve_requests_is_empty()
     }
@@ -357,9 +384,9 @@ impl RemoteStateActor {
         send_tasks: &mut FuturesUnorderedBounded<Boxed<()>>,
     ) {
         match msg {
-            RemoteStateMessage::SendDatagram(sender, transmit) => {
+            RemoteStateMessage::SendDatagram(attempt, finished, sender, transmit) => {
                 self.state
-                    .handle_msg_send_datagram(sender, transmit, send_tasks);
+                    .handle_msg_send_datagram(attempt, finished, sender, transmit, send_tasks);
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx);
@@ -792,71 +819,92 @@ impl State {
     /// Handles [`RemoteStateMessage::SendDatagram`].
     fn handle_msg_send_datagram(
         &mut self,
+        attempt: EndpointIdMappedAddr,
+        finished: CancellationToken,
         sender: Box<TransportsSender>,
         transmit: OwnedTransmit,
         send_tasks: &mut FuturesUnorderedBounded<Boxed<()>>,
     ) {
-        // Sending datagrams might fail, e.g. because we don't have the right transports set
-        // up to handle sending this owned transmit to.
-        // After all, we try every single path that we know (relay URL, IP address), even
-        // though we might not have a relay transport or ip-capable transport set up.
-        // So these errors must not be fatal for this actor (or even this operation).
-
-        let targets = if let Some(addr) = self.selected_path.as_ref() {
-            trace!(?addr, "sending datagram to selected path");
-
-            // TODO(Frando): We might want to include a local IP here in the future, if we confidently
-            // know that it is the correct one.
-            // See https://github.com/n0-computer/iroh/issues/4280.
-            smallvec![transports::FourTuple::from_remote(addr.remote())]
-        } else {
-            trace!(
-                paths = ?self.paths.addrs().collect::<Vec<_>>(),
-                "sending datagram to all known paths",
-            );
-            if self.paths.is_empty() {
-                warn!("Cannot send datagrams: No paths to remote endpoint known");
-            }
-
-            let mut targets = SmallVec::new();
-            for addr in self.paths.addrs() {
-                // We never want to send to our local addresses.
-                // The local address set is updated in the main loop so we can use `peek` here.
-                if let transports::Addr::Ip(sockaddr) = addr
-                    && self
-                        .local_direct_addrs
-                        .peek()
-                        .iter()
-                        .any(|a| a.addr == *sockaddr)
-                {
-                    trace!(%sockaddr, "not sending datagram to our own address");
-
-                // TODO(Frando): We might want to include a local IP here in the future, if we confidently
-                // know that it is the correct one.
-                // See https://github.com/n0-computer/iroh/issues/4280.
-                } else {
-                    targets.push(transports::FourTuple::from_remote(addr.clone()));
-                }
-            }
-            // This message is received *before* a connection is added.  So we do
-            // not yet have a connection to holepunch.  Instead we trigger
-            // holepunching when AddConnection is received.
-            targets
-        };
-
-        if targets.is_empty() {
+        if finished.is_cancelled() {
             return;
         }
+        let fallback_at = self
+            .handshakes
+            .entry(attempt)
+            .or_insert_with(|| {
+                let prefer_selected = self.selected_path.is_some();
+                let fallback_at = Instant::now()
+                    + if prefer_selected {
+                        HANDSHAKE_FALLBACK_DELAY
+                    } else {
+                        Duration::ZERO
+                    };
+                let done = finished.clone();
+                self.handshake_events.push(Box::pin(async move {
+                    tokio::select! {
+                        biased;
+                        _ = done.cancelled() => HandshakeEvent::Finished(attempt),
+                        _ = time::sleep_until(fallback_at), if prefer_selected => HandshakeEvent::Fallback(attempt),
+                    }
+                }));
+                PendingHandshake {
+                    fallback_at,
+                    finished: finished.clone(),
+                }
+            })
+            .fallback_at;
+
+        let selected = self.selected_path.as_ref().map(|path| {
+            // The Initial does not yet have a local address to respond from.
+            transports::FourTuple::from_remote(path.remote())
+        });
+        if selected.is_none() && self.paths.is_empty() {
+            warn!("Cannot send datagrams: No paths to remote endpoint known");
+        }
+        let targets = self
+            .paths
+            .addrs()
+            .filter(|addr| selected.as_ref().is_none_or(|path| path.remote() != **addr))
+            .filter(|addr| match addr {
+                transports::Addr::Ip(addr) => !self
+                    .local_direct_addrs
+                    .peek()
+                    .iter()
+                    .any(|local| local.addr == *addr),
+                _ => true,
+            })
+            .map(|addr| transports::FourTuple::from_remote(addr.clone()))
+            .collect();
+        let selected_sender = sender.clone();
+        let selected_transmit = transmit.clone();
         let send = Box::pin(
             async move {
-                if time::timeout(
-                    DATAGRAM_SEND_TIMEOUT,
-                    send_datagram_to_targets(sender, transmit, targets),
-                )
-                .await
-                .is_err()
-                {
-                    debug!("Datagram send timed out");
+                let sends = async move {
+                    // A blocked selected transport must not delay the fallback either.
+                    let preferred = async move {
+                        if let Some(path) = selected {
+                            send_datagram_to_targets(
+                                selected_sender,
+                                selected_transmit,
+                                smallvec![path],
+                            )
+                            .await;
+                        }
+                    };
+                    let fallback = async move {
+                        time::sleep_until(fallback_at).await;
+                        send_datagram_to_targets(sender, transmit, targets).await;
+                    };
+                    tokio::join!(preferred, fallback);
+                };
+                tokio::select! {
+                    biased;
+                    _ = finished.cancelled() => {},
+                    result = time::timeout(DATAGRAM_SEND_TIMEOUT, sends) => {
+                        if result.is_err() {
+                            debug!("Datagram send timed out");
+                        }
+                    }
                 }
             }
             .instrument(Span::current()),
@@ -864,6 +912,38 @@ impl State {
         if send_tasks.try_push(send).is_err() {
             debug!("dropping datagram: send task limit reached");
         }
+    }
+
+    fn handle_handshake_event(&mut self, event: HandshakeEvent) {
+        match event {
+            HandshakeEvent::Fallback(attempt) => {
+                let Some(pending) = self.handshakes.get(&attempt) else {
+                    return;
+                };
+                let finished = pending.finished.clone();
+                self.handshake_events.push(Box::pin(async move {
+                    finished.cancelled().await;
+                    HandshakeEvent::Finished(attempt)
+                }));
+                self.trigger_address_lookup();
+            }
+            HandshakeEvent::Finished(attempt) => {
+                self.handshakes.remove(&attempt);
+                // Do not cancel discovery needed by another dial or by path recovery.
+                if self.selected_path.is_some()
+                    && self.paths.resolve_requests_is_empty()
+                    && !self.needs_handshake_lookup()
+                {
+                    self.address_lookup_stream = None;
+                }
+            }
+        }
+    }
+
+    fn needs_handshake_lookup(&self) -> bool {
+        self.handshakes.values().any(|pending| {
+            !pending.finished.is_cancelled() && pending.fallback_at <= Instant::now()
+        })
     }
 
     /// Handles [`RemoteStateMessage::ResolveRemote`].
@@ -875,16 +955,18 @@ impl State {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
         self.paths.resolve_remote(tx);
-        // Start Address Lookup if we have no selected path.
+        // A selected path gets a head start before a new handshake starts lookup.
         self.trigger_address_lookup();
     }
 
     /// Triggers Address Lookup for the remote endpoint, if needed.
     ///
-    /// Does not start Address Lookup if we have a selected path or if Address Lookup is
-    /// currently running.
+    /// An existing selected path suppresses lookup only while new handshakes are still
+    /// giving that path a head start. An already running lookup is shared by all attempts.
     fn trigger_address_lookup(&mut self) {
-        if self.selected_path.is_some() || self.address_lookup_stream.is_some() {
+        if self.address_lookup_stream.is_some()
+            || (self.selected_path.is_some() && !self.needs_handshake_lookup())
+        {
             return;
         }
         let stream = self.address_lookup.resolve(self.endpoint_id);
@@ -1191,7 +1273,12 @@ pub(crate) enum RemoteStateMessage {
     /// operation with a bunch more copying.  So it should only be used for sending QUIC
     /// Initial packets.
     #[debug("SendDatagram(..)")]
-    SendDatagram(Box<TransportsSender>, OwnedTransmit),
+    SendDatagram(
+        EndpointIdMappedAddr,
+        CancellationToken,
+        Box<TransportsSender>,
+        OwnedTransmit,
+    ),
     /// Adds an active connection to this remote endpoint.
     ///
     /// The actor will downgrade the connection to a [`noq::WeakConnectionHandle`] as soon
