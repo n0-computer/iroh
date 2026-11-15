@@ -242,6 +242,22 @@
 //!
 //! Please see the examples directory for more nuanced examples.
 //!
+//! # Native UDP in the browser
+//!
+//! In browsers iroh only has relay connections. Built with
+//! `RUSTFLAGS="--cfg wasm_native_udp"` for `wasm32-unknown-unknown`, the IP
+//! transports stay enabled and use UDP sockets provided by the iroh-link app
+//! through the `wasm-native-udp` crate (re-exported as `netwatch::wasm_native_udp`).
+//!
+//! - Call `wasm_native_udp::init().await` before [`Endpoint::bind`]. It may show a
+//!   permission prompt. Without it, binding the default IP transports fails.
+//! - If the page does not run inside iroh-link, the default IP transports are
+//!   dropped and the endpoint is relay only.
+//! - Direct addresses are the host's interface addresses. Address discovery
+//!   via the relays (QAD) is not done in the browser, since there is no DNS
+//!   resolver for relay hostnames, so public addresses behind a NAT are not
+//!   advertised.
+//!
 //!
 //! [QUIC]: https://quicwg.org
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi

@@ -37,7 +37,7 @@ missing_debug_implementations = "warn"
 # do.  To enable for a crate set `#![cfg_attr(iroh_docsrs,
 # feature(doc_cfg))]` in the crate.
 # We also have our own `iroh_loom` cfg to enable tokio-rs/loom testing.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_loom)", "cfg(skip_patchbay)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_loom)", "cfg(skip_patchbay)", "cfg(wasm_native_udp)"] }
 
 [workspace.lints.clippy]
 unused_async = "warn"
@@ -63,3 +63,5 @@ type_method_marked_deprecated = { required-update = "minor" }
 noq = { git = "https://github.com/n0-computer/noq", branch = "main" }
 noq-proto = { git = "https://github.com/n0-computer/noq", branch = "main" }
 noq-udp = { git = "https://github.com/n0-computer/noq", branch = "main" }
+# Fork with a UdpSocket backed by wasm-native-udp under `--cfg wasm_native_udp`.
+netwatch = { path = "/home/bit/Code/rust/iroh-content-discovery/.claude/worktrees/net-tools/netwatch" }

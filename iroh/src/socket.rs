@@ -36,7 +36,7 @@ use n0_future::{
 };
 use n0_watcher::{self, Watchable, Watcher};
 use netwatch::netmon;
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use netwatch::{
     interfaces::{IpNet, Ipv6AddrFlags},
     ip::LocalAddresses,
@@ -360,7 +360,7 @@ pub(crate) struct Socket {
     local_addrs_watch: LocalAddrsWatch,
     home_relay_watch: HomeRelayWatcher,
     /// Currently bound IP addresses of all sockets
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     ip_bind_addrs: Vec<SocketAddr>,
     /// The DNS resolver to be used in this socket.
     #[cfg(not(wasm_browser))]
@@ -419,7 +419,7 @@ impl Socket {
         self.local_addrs_watch.clone().get()
     }
 
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     fn ip_bind_addrs(&self) -> &[SocketAddr] {
         &self.ip_bind_addrs
     }
@@ -942,6 +942,17 @@ impl EndpointInner {
         )
         .map_err(|err| e!(BindError::Sockets, err))?;
 
+        // In the browser, sockets live in the iroh-link host: wait for the real ports.
+        #[cfg(all(wasm_browser, ip_transport))]
+        let transports = {
+            let mut transports = transports;
+            transports
+                .wait_ip_bound()
+                .await
+                .map_err(|err| e!(BindError::Sockets, err))?;
+            transports
+        };
+
         if let Some(v4_port) = transports.local_addrs().into_iter().find_map(|t| {
             if let transports::Addr::Ip(SocketAddr::V4(addr)) = t {
                 Some(addr.port())
@@ -1000,7 +1011,7 @@ impl EndpointInner {
             metrics: metrics.clone(),
             local_addrs_watch: transports.local_addrs_watch(),
             home_relay_watch,
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             ip_bind_addrs: transports.ip_bind_addrs(),
             tls_config: tls_config.clone(),
             proxy_url: proxy_url.clone(),
@@ -1077,7 +1088,7 @@ impl EndpointInner {
 
         let local_interfaces_watcher = network_monitor.interface_state();
 
-        #[cfg_attr(not(wasm_browser), allow(unused_mut))]
+        #[cfg_attr(ip_transport, allow(unused_mut))]
         let mut actor = Actor {
             endpoint: endpoint.clone(),
             sock: sock.clone(),
@@ -1091,7 +1102,7 @@ impl EndpointInner {
             call_notify_quic_network_change: None,
         };
         // Initialize addresses
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         actor.update_direct_addresses(None);
 
         let actor_task = task::spawn(
@@ -1554,7 +1565,7 @@ impl Actor {
                     match report {
                         Ok((report, _)) => {
                             self.handle_net_report_report(report);
-                            #[cfg(not(wasm_browser))]
+                            #[cfg(ip_transport)]
                             {
                                 self.periodic_re_stun_timer = new_re_stun_timer(true);
                             }
@@ -1751,7 +1762,14 @@ impl Actor {
                     .copied()
                     .collect()
             },
-            #[cfg(wasm_browser)]
+            #[cfg(all(wasm_browser, ip_transport))]
+            local_addrs: self
+                .transports_network_change
+                .ip_interface_addrs()
+                .into_iter()
+                .map(|addr| addr.ip())
+                .collect(),
+            #[cfg(not(ip_transport))]
             local_addrs: Default::default(),
         };
 
@@ -1768,7 +1786,7 @@ impl Actor {
 
         // This block is a band-aid for https://github.com/n0-computer/iroh/issues/4588
         // See patchbay test `lan_switch_advertises_new_addr_without_relay`
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         {
             if self.sock.relay_map.is_empty() {
                 // When there are no relays, update direct addresses immediately from local interfaces
@@ -1801,7 +1819,7 @@ impl Actor {
                 self.remote_map.add_connection(remote, conn, tx).await;
             }
             ActorMessage::DirectAddrRefresh => {
-                #[cfg(not(wasm_browser))]
+                #[cfg(ip_transport)]
                 {
                     let (report, _reason) = self.sock.net_report.get();
                     self.update_direct_addresses(report.as_ref());
@@ -1823,7 +1841,7 @@ impl Actor {
     /// - A net_report report.
     /// - The local interfaces IP addresses.
     /// - User configured addresses.
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     fn update_direct_addresses(&mut self, net_report_report: Option<&net_report::Report>) {
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
         // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
@@ -1903,7 +1921,7 @@ impl Actor {
         self.sock.store_direct_addresses(stored_addrs);
     }
 
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     fn collect_local_addresses(
         &mut self,
         addrs: &mut BTreeMap<SocketAddr, (DirectAddrType, Option<Ipv6AddrFlags>)>,
@@ -1942,10 +1960,17 @@ impl Actor {
             .iter()
             .any(|(_, local)| local.ip().is_unspecified())
         {
+            #[cfg(not(wasm_browser))]
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
             } = self.local_interfaces_watcher.get().local_addresses;
+            // The browser cannot list interfaces, the iroh-link host reports its addresses.
+            #[cfg(wasm_browser)]
+            let LocalAddresses {
+                regular: mut ips,
+                loopback,
+            } = self.transports_network_change.ip_local_addresses();
             if ips.is_empty() && addrs.is_empty() {
                 // Include loopback addresses only if there are no other interfaces
                 // or public addresses, this allows testing offline.
@@ -1987,12 +2012,12 @@ impl Actor {
             self.transports_network_change.on_network_change(r);
         }
 
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         self.update_direct_addresses(report.as_ref());
     }
 }
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 fn find_flags(state: &netmon::State, ip: IpAddr) -> Option<Ipv6AddrFlags> {
     if ip.is_ipv6() {
         state

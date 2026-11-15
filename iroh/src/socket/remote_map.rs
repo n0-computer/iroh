@@ -532,7 +532,7 @@ mod tests {
         // Hold the receiver to apply backpressure without changing poll_send.
         let (mut sender, receiver) = transports::TransportsSender::with_bounded_relay(
             256,
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             std::iter::empty(),
         );
         let transmit = Transmit {

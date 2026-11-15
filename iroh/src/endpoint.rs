@@ -13,11 +13,11 @@
 
 use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap, tls::CaTlsConfig};
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use n0_error::bail;
 use n0_error::{AnyError, e, ensure, stack_error};
 use n0_watcher::Watcher;
@@ -82,14 +82,14 @@ use crate::{
     tls::{self, DEFAULT_MAX_TLS_TICKETS, misc::RustlsTokenKey},
 };
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 mod bind;
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
 pub(crate) mod quic;
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 pub use bind::{BindOpts, InvalidSocketAddr, ToSocketAddr};
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 
@@ -116,7 +116,7 @@ pub use self::{
         ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError,
     },
 };
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use crate::socket::transports::IpConfig;
 use crate::socket::transports::TransportConfig;
 pub use crate::{net_report::NetReportConfig, portmapper::PortmapperConfig};
@@ -192,9 +192,9 @@ impl Builder {
     /// Creates an empty builder with no address lookup services, and [`RelayMode::Disabled`].
     pub fn empty() -> Self {
         let transports = vec![
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             TransportConfig::default_ipv4(),
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             TransportConfig::default_ipv6(),
         ];
 
@@ -224,6 +224,9 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the endpoint.
+    ///
+    /// In the browser with `--cfg wasm_native_udp`, call `wasm_native_udp::init()`
+    /// first, see the [crate docs](crate#native-udp-in-the-browser).
     #[instrument(name = "endpoint", skip_all, fields(id))]
     pub async fn bind(self) -> Result<Endpoint, BindError> {
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
@@ -268,8 +271,29 @@ impl Builder {
                 .build()
         });
 
+        // Without the iroh-link host, fall back to relay only instead of failing.
+        #[cfg(all(wasm_browser, ip_transport))]
+        let transports = {
+            let mut transports = self.transports;
+            if !netwatch::wasm_native_udp::is_available() {
+                warn!("native UDP unavailable, using relay only");
+                transports.retain(|t| {
+                    !matches!(
+                        t,
+                        TransportConfig::Ip {
+                            is_user_defined: false,
+                            ..
+                        }
+                    )
+                });
+            }
+            transports
+        };
+        #[cfg(not(all(wasm_browser, ip_transport)))]
+        let transports = self.transports;
+
         let sock_opts = socket::Options {
-            transports: self.transports,
+            transports,
             secret_key,
             address_lookup_user_data: self.address_lookup_user_data,
             proxy_url: self.proxy_url,
@@ -364,7 +388,7 @@ impl Builder {
     /// # Ok(()) }
     /// # }
     /// ```
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub fn bind_addr<A>(self, addr: A) -> Result<Self, InvalidSocketAddr>
     where
         A: ToSocketAddr,
@@ -444,7 +468,7 @@ impl Builder {
     /// # Ok(()) }
     /// # }
     /// ```
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub fn bind_addr_with_opts<A>(
         mut self,
         addr: A,
@@ -504,7 +528,7 @@ impl Builder {
     }
 
     /// Removes all IP based transports.
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub fn clear_ip_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Ip { .. }));
@@ -1283,7 +1307,7 @@ impl Endpoint {
     /// ```
     ///
     /// [`RelayUrl`]: crate::RelayUrl
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
         let watch_addrs = self.inner.ip_addrs();
         let watch_relay = self.inner.home_relay();
@@ -1310,7 +1334,7 @@ impl Endpoint {
     /// is dropped. Closing the endpoint does not disconnect the watcher. Thus, a stream created
     /// via [`Watcher::stream`] only terminates once the endpoint stops. If you want to stop a
     /// task once the endpoint stops combine with [`Self::closed`].
-    #[cfg(wasm_browser)]
+    #[cfg(not(ip_transport))]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `EndpointAddr` have *some* way
@@ -1460,7 +1484,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub fn bound_sockets(&self) -> Vec<SocketAddr> {
         self.inner
             .local_addr()

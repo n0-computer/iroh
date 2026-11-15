@@ -821,7 +821,19 @@ async fn run_https_probe(
     #[cfg(not(wasm_browser))] proxy_url: Option<&Url>,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
-    let url = relay.join(RELAY_PROBE_RELATIVE_PATH)?;
+    #[cfg_attr(not(wasm_browser), allow(unused_mut))]
+    let mut url = relay.join(RELAY_PROBE_RELATIVE_PATH)?;
+    // The default relay hostnames are fully qualified ("...iroh.link."). WebKit
+    // refuses requests to hosts with a trailing dot, so drop it (as the relay client does).
+    #[cfg(wasm_browser)]
+    if let Some(host) = url
+        .host_str()
+        .and_then(|h| h.strip_suffix('.'))
+        .map(str::to_owned)
+    {
+        // Setting a shorter host on a URL that already has one cannot fail.
+        url.set_host(Some(&host)).ok();
+    }
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:

@@ -25,15 +25,15 @@ use crate::{
 };
 
 pub(crate) mod custom;
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 mod ip;
 mod relay;
 
 use custom::{CustomEndpoint, CustomSender, CustomTransport};
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 pub(crate) use self::ip::Config as IpConfig;
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{
     HomeRelayWatch, RelayActorConfig, RelayConnectionFailure, RelayConnectionState, RelayTransport,
@@ -48,7 +48,7 @@ const MAX_CONSECUTIVE_RECV_ERRORS: usize = 8;
 /// Manages the different underlying data transports that the socket can support.
 #[derive(Debug)]
 pub(crate) struct Transports {
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     ip: IpTransports,
     relay: Vec<RelayTransport>,
     custom: Vec<Box<dyn CustomEndpoint>>,
@@ -75,7 +75,7 @@ pub(super) type HomeRelayWatcher = n0_watcher::Map<
     Vec<RelayStatus>,
 >;
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 /// Combined watcher type for all transports, custom, relay and ip
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     n0_watcher::Tuple<
@@ -86,7 +86,7 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
 >;
 
 /// Type for watching relay and custom transports only, no ip
-#[cfg(wasm_browser)]
+#[cfg(not(ip_transport))]
 pub(crate) type LocalAddrsWatch =
     n0_watcher::Map<n0_watcher::Tuple<CustomTransportsWatcher, RelayTransportsWatcher>, Vec<Addr>>;
 
@@ -95,7 +95,7 @@ pub(crate) type LocalAddrsWatch =
 #[non_exhaustive]
 pub(crate) enum TransportConfig {
     /// IP based transport
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     Ip {
         /// The actual IP Config
         config: ip::Config,
@@ -116,7 +116,7 @@ pub(crate) enum TransportConfig {
 
 impl TransportConfig {
     /// Configures a default IPv4 transport, listening on `0.0.0.0:0`.
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(crate) fn default_ipv4() -> Self {
         use std::net::Ipv4Addr;
 
@@ -134,7 +134,7 @@ impl TransportConfig {
     }
 
     /// Configures a default IPv6 transport, listening on `[::]:0`.
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(crate) fn default_ipv6() -> Self {
         use ipnet::Ipv6Net;
 
@@ -151,7 +151,7 @@ impl TransportConfig {
     }
 
     /// Is this a default IPv4 configuration
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(crate) fn is_ipv4_default(&self) -> bool {
         match self {
             Self::Ip { config, .. } => config.is_default() && config.is_ipv4(),
@@ -160,7 +160,7 @@ impl TransportConfig {
     }
 
     /// Is this a default IPv6 configuration
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(crate) fn is_ipv6_default(&self) -> bool {
         match self {
             Self::Ip { config, .. } => config.is_default() && config.is_ipv6(),
@@ -171,7 +171,7 @@ impl TransportConfig {
     /// Is this configuration set by the user.
     pub(crate) fn is_user_defined(&self) -> bool {
         match self {
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             Self::Ip {
                 is_user_defined, ..
             } => *is_user_defined,
@@ -191,7 +191,7 @@ impl Transports {
         metrics: &EndpointMetrics,
         shutdown_token: CancellationToken,
     ) -> io::Result<Self> {
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         let ip_configs = {
             let mut ip_configs = Vec::new();
 
@@ -219,7 +219,7 @@ impl Transports {
             }
             ip_configs
         };
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         let ip = IpTransports::bind(ip_configs.into_iter(), metrics)?;
 
         let relay = configs
@@ -241,7 +241,7 @@ impl Transports {
         }
 
         Ok(Self {
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             ip,
             relay,
             custom,
@@ -316,7 +316,7 @@ impl Transports {
         self.poll_recv_counter = self.poll_recv_counter.wrapping_add(1);
         let counter = self.poll_recv_counter;
         if counter.is_multiple_of(2) {
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             for transport in self.ip.iter_mut() {
                 poll_transport!(transport);
             }
@@ -333,7 +333,7 @@ impl Transports {
             for transport in self.relay.iter_mut().rev() {
                 poll_transport!(transport);
             }
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             for transport in self.ip.iter_mut() {
                 poll_transport!(transport);
             }
@@ -379,7 +379,7 @@ impl Transports {
             .map(|v| v.into_iter().flatten().collect())
     }
 
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     /// Watch for all currently known local addresses, including IP based transports.
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
@@ -397,7 +397,7 @@ impl Transports {
         })
     }
 
-    #[cfg(wasm_browser)]
+    #[cfg(not(ip_transport))]
     /// Watch for all currently known local addresses, excluding IP based transports.
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
@@ -412,20 +412,28 @@ impl Transports {
         })
     }
 
+    /// Waits until the iroh-link host confirmed the bind of every IP socket.
+    ///
+    /// Must run before any sender is created. Non required sockets that fail are dropped.
+    #[cfg(all(wasm_browser, ip_transport))]
+    pub(crate) async fn wait_ip_bound(&mut self) -> io::Result<()> {
+        self.ip.wait_bound().await
+    }
+
     /// Returns the bound addresses for IP based transports
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(crate) fn ip_bind_addrs(&self) -> Vec<SocketAddr> {
         self.ip.iter().map(|t| t.bind_addr()).collect()
     }
 
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
         let ip = self.ip.iter().map(|t| t.max_transmit_segments());
         let custom = self.custom.iter().map(|t| t.max_transmit_segments());
         ip.chain(custom).min().unwrap_or(NonZeroUsize::MIN)
     }
 
-    #[cfg(wasm_browser)]
+    #[cfg(not(ip_transport))]
     pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
         self.custom
             .iter()
@@ -434,7 +442,7 @@ impl Transports {
             .unwrap_or(NonZeroUsize::MIN)
     }
 
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(crate) fn max_receive_segments(&self) -> NonZeroUsize {
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
         // that noq creates. Having buffers slightly bigger than necessary
@@ -447,23 +455,23 @@ impl Transports {
         res.unwrap_or(NonZeroUsize::MIN)
     }
 
-    #[cfg(wasm_browser)]
+    #[cfg(not(ip_transport))]
     pub(crate) fn max_receive_segments(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
 
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(crate) fn may_fragment(&self) -> bool {
         self.ip.iter().any(|t| t.may_fragment())
     }
 
-    #[cfg(wasm_browser)]
+    #[cfg(not(ip_transport))]
     pub(crate) fn may_fragment(&self) -> bool {
         false
     }
 
     pub(crate) fn create_sender(&self) -> TransportsSender {
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         let ip = self.ip.create_sender();
 
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
@@ -471,7 +479,7 @@ impl Transports {
         let max_transmit_segments = self.max_transmit_segments();
 
         TransportsSender {
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             ip,
             relay,
             custom,
@@ -482,7 +490,7 @@ impl Transports {
     /// Handles potential changes to the underlying network conditions.
     pub(crate) fn create_network_change_sender(&self) -> NetworkChangeSender {
         NetworkChangeSender {
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             ip: self
                 .ip
                 .iter()
@@ -499,14 +507,14 @@ impl Transports {
 
 #[derive(Debug)]
 pub(crate) struct NetworkChangeSender {
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     ip: Vec<IpNetworkChangeSender>,
     relay: Vec<RelayNetworkChangeSender>,
 }
 
 impl NetworkChangeSender {
     pub(crate) fn on_network_change(&self, report: &Report) {
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         for ip in &self.ip {
             ip.on_network_change(report);
         }
@@ -514,6 +522,29 @@ impl NetworkChangeSender {
         for relay in &self.relay {
             relay.on_network_change(report);
         }
+    }
+
+    /// Returns the host's interface addresses of all IP sockets, with their bound port.
+    #[cfg(all(wasm_browser, ip_transport))]
+    pub(crate) fn ip_interface_addrs(&self) -> Vec<SocketAddr> {
+        self.ip.iter().flat_map(|t| t.interface_addrs()).collect()
+    }
+
+    /// Returns the host's interface IPs, standing in for the interface list.
+    #[cfg(all(wasm_browser, ip_transport))]
+    pub(crate) fn ip_local_addresses(&self) -> netwatch::ip::LocalAddresses {
+        let mut addrs = netwatch::ip::LocalAddresses::default();
+        for ip in self.ip_interface_addrs().into_iter().map(|a| a.ip()) {
+            let list = if ip.is_loopback() {
+                &mut addrs.loopback
+            } else {
+                &mut addrs.regular
+            };
+            if !list.contains(&ip) {
+                list.push(ip);
+            }
+        }
+        addrs
     }
 
     /// Triggers an immediate relay connection health check after a network change.
@@ -529,7 +560,7 @@ impl NetworkChangeSender {
     pub(crate) fn rebind(&self) -> std::io::Result<()> {
         let mut res = Ok(());
 
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         for transport in &self.ip {
             if let Err(err) = transport.rebind() {
                 warn!("failed to rebind {:?}", err);
@@ -953,7 +984,7 @@ impl fmt::Display for FourTuple {
 /// A sender that sends to all our transports.
 #[derive(Debug, Clone)]
 pub(crate) struct TransportsSender {
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     ip: IpTransportsSender,
     relay: Vec<RelaySender>,
     custom: Vec<Arc<dyn CustomSender>>,
@@ -969,11 +1000,11 @@ impl TransportsSender {
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         match network_path {
-            #[cfg(wasm_browser)]
+            #[cfg(not(ip_transport))]
             FourTuple::Ip { .. } => {
                 return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
             }
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             FourTuple::Ip {
                 remote: dst_addr,
                 local: src,
@@ -1077,7 +1108,7 @@ impl noq::AsyncUdpSocket for Transport {
         self.transports.poll_recv(cx, bufs, meta, &self.sock)
     }
 
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     fn local_addr(&self) -> io::Result<SocketAddr> {
         let local_addrs = self.transports.local_addrs();
         let addrs: Vec<_> = local_addrs
@@ -1117,7 +1148,7 @@ impl noq::AsyncUdpSocket for Transport {
         Err(io::Error::other("no valid address available"))
     }
 
-    #[cfg(wasm_browser)]
+    #[cfg(not(ip_transport))]
     fn local_addr(&self) -> io::Result<SocketAddr> {
         // Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
         Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
@@ -1318,7 +1349,7 @@ mod tests {
     impl TransportsSender {
         pub(in crate::socket) fn with_bounded_relay(
             capacity: usize,
-            #[cfg(not(wasm_browser))] ip_configs: impl Iterator<Item = IpConfig>,
+            #[cfg(ip_transport)] ip_configs: impl Iterator<Item = IpConfig>,
         ) -> (
             TransportsSender,
             impl futures_util::Stream<Item = ()> + Unpin,
@@ -1326,7 +1357,7 @@ mod tests {
             use futures_util::StreamExt;
             let (sender, receiver) = RelaySender::bounded_for_test(capacity);
             let sender = TransportsSender {
-                #[cfg(not(wasm_browser))]
+                #[cfg(ip_transport)]
                 ip: IpTransports::bind(ip_configs, &EndpointMetrics::default())
                     .expect("test transports must bind")
                     .create_sender(),
@@ -1382,7 +1413,7 @@ mod tests {
     fn custom_only_transports(custom: Vec<Box<dyn CustomEndpoint>>) -> Transports {
         let metrics = EndpointMetrics::default();
         Transports {
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             ip: ip::IpTransports::bind(std::iter::empty(), &metrics).unwrap(),
             relay: Vec::new(),
             custom,

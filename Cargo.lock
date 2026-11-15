@@ -2419,6 +2419,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-link-udp-proto"
+version = "0.1.6"
+
+[[package]]
 name = "iroh-metrics"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2969,9 +2973,9 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "netdev"
-version = "0.46.3"
+version = "0.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3c52c2584961c68f5a6e3356797344061f818c93b8acc9cd6d7e284795e563e"
+checksum = "98a4d13f8061600697d721c5fd45262aba533a7d4a7670e7c64fd02d68e4a9fb"
 dependencies = [
  "block2",
  "dispatch2",
@@ -3090,8 +3094,6 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c3a0623d1a02e08a6f86fb9481811578271d61f7395f7f0701775be64788b2c"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3119,6 +3121,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "wasm-native-udp",
  "web-sys",
  "windows",
  "windows-result",
@@ -5625,6 +5628,18 @@ name = "wasm-bindgen-test-shared"
 version = "0.2.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f37b4f992cebe528ef34964ae69681ac0fe7080071e7298e46008f9d380302af"
+
+[[package]]
+name = "wasm-native-udp"
+version = "0.1.6"
+dependencies = [
+ "iroh-link-udp-proto",
+ "js-sys",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
 
 [[package]]
 name = "wasm-streams"

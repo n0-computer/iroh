@@ -5,6 +5,8 @@ fn main() {
     cfg_aliases! {
         // Convenience aliases
         wasm_browser: { all(target_family = "wasm", target_os = "unknown") },
-        with_crypto_provider: { any(feature = "tls-ring", feature = "tls-aws-lc-rs") }
+        with_crypto_provider: { any(feature = "tls-ring", feature = "tls-aws-lc-rs") },
+        // IP (UDP) transports: native, or in the browser with `--cfg wasm_native_udp`.
+        ip_transport: { any(not(wasm_browser), wasm_native_udp) }
     }
 }

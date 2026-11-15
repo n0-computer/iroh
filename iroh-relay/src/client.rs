@@ -409,6 +409,19 @@ impl ClientBuilder {
                     url: dial_url.clone()
                 })
             })?;
+        // The default relay hostnames are fully qualified ("...iroh.link."). WebKit
+        // refuses connections to hosts with a trailing dot, so drop it.
+        if let Some(host) = dial_url
+            .host_str()
+            .and_then(|h| h.strip_suffix('.'))
+            .map(str::to_owned)
+        {
+            dial_url.set_host(Some(&host)).map_err(|_| {
+                e!(ConnectError::InvalidWebsocketUrl {
+                    url: dial_url.clone()
+                })
+            })?;
+        }
 
         if let Some(token) = self.auth_token.as_ref() {
             dial_url

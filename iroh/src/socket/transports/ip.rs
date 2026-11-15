@@ -284,6 +284,17 @@ impl IpNetworkChangeSender {
         Ok(())
     }
 
+    /// Returns the host's interface addresses of this socket's family, with the bound port.
+    #[cfg(wasm_browser)]
+    pub(super) fn interface_addrs(&self) -> Vec<SocketAddr> {
+        let is_ipv4 = self.local_addr.get().is_ipv4();
+        self.socket
+            .interface_addrs()
+            .into_iter()
+            .filter(|addr| addr.is_ipv4() == is_ipv4)
+            .collect()
+    }
+
     pub(super) fn on_network_change(&self, _info: &crate::socket::Report) {
         // Nothing to do for now
     }
@@ -470,6 +481,40 @@ impl IpTransports {
             v6: ip_v6,
             default_v6_index,
         })
+    }
+
+    /// Waits until the iroh-link host confirmed the bind of every socket.
+    ///
+    /// Drops non required sockets whose bind failed and updates the local addresses
+    /// to the ports the host assigned.
+    #[cfg(wasm_browser)]
+    pub(super) async fn wait_bound(&mut self) -> io::Result<()> {
+        async fn retain_bound(transports: &mut Vec<IpTransport>) -> io::Result<()> {
+            let mut bound = Vec::with_capacity(transports.len());
+            for transport in transports.drain(..) {
+                let addr = transport.bind_addr();
+                match transport.socket.bound().await {
+                    Ok(()) => {
+                        let local_addr = transport.socket.local_addr()?;
+                        debug!(%addr, %local_addr, "host confirmed bind");
+                        transport.local_addr.set(local_addr).ok();
+                        bound.push(transport);
+                    }
+                    Err(err) if transport.config.is_required() => return Err(err),
+                    Err(err) => {
+                        info!(%addr, ?err, "ignoring non required bind failure");
+                    }
+                }
+            }
+            *transports = bound;
+            Ok(())
+        }
+
+        retain_bound(&mut self.v4).await?;
+        retain_bound(&mut self.v6).await?;
+        self.default_v4_index = self.v4.iter().position(|i| i.config.is_default());
+        self.default_v6_index = self.v6.iter().position(|i| i.config.is_default());
+        Ok(())
     }
 
     pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = &mut IpTransport> {
