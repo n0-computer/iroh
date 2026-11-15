@@ -423,27 +423,29 @@ impl RemoteStateActor {
         // Store PathId(0), set path_status and select best path, check if holepunching
         // is needed.
         if let Some(path) = conn.path(PathId::ZERO) {
-            let path_remote = self
-                .state
+            self.state
                 .register_and_configure_path(conn_id, conn_state, &path);
-
-            if let Some(path_remote) = path_remote
-                && !path_remote.is_relay()
-                && conn.side().is_client()
-            {
-                // We may have raced this with a relay address.  Try and add any
-                // relay addresses we have back.
-                let relays = self
-                    .state
-                    .paths
-                    .addrs()
-                    .filter(|addr| addr.is_relay())
-                    .map(|addr| transports::FourTuple::from_remote(addr.clone()))
-                    .collect::<Vec<_>>();
-                for open_addr in relays {
-                    self.state
-                        .open_path_on_conn(conn_id, conn_state, &conn, &open_addr);
-                }
+        }
+        if conn.side().is_client() {
+            // Initial packets may use a cached IP path, or race a custom path
+            // that loses. Path selectors only see open paths, and QNT cannot
+            // discover custom addresses. Open known custom paths here as well
+            // as relay backups so the selector can evaluate them.
+            let additional_paths = self
+                .state
+                .paths
+                .addrs()
+                .filter(|addr| {
+                    matches!(
+                        addr,
+                        transports::Addr::Relay(..) | transports::Addr::Custom(_)
+                    )
+                })
+                .map(|addr| transports::FourTuple::from_remote(addr.clone()))
+                .collect::<Vec<_>>();
+            for open_addr in additional_paths {
+                self.state
+                    .open_path_on_conn(conn_id, conn_state, &conn, &open_addr);
             }
         }
         self.trigger_holepunching();
