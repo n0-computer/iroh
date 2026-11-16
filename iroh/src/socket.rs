@@ -942,7 +942,7 @@ impl EndpointInner {
         )
         .map_err(|err| e!(BindError::Sockets, err))?;
 
-        // In the browser, sockets live in the iroh-link host: wait for the real ports.
+        // In the browser, sockets live in the webview-sockets host: wait for the real ports.
         #[cfg(all(wasm_browser, ip_transport))]
         let transports = {
             let mut transports = transports;
@@ -1965,7 +1965,7 @@ impl Actor {
                 regular: mut ips,
                 loopback,
             } = self.local_interfaces_watcher.get().local_addresses;
-            // The browser cannot list interfaces, the iroh-link host reports its addresses.
+            // The browser cannot list interfaces, the webview-sockets host reports its addresses.
             #[cfg(wasm_browser)]
             let LocalAddresses {
                 regular: mut ips,

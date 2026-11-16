@@ -2419,10 +2419,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iroh-link-udp-proto"
-version = "0.1.6"
-
-[[package]]
 name = "iroh-metrics"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3094,6 +3090,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.20.0"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat%2Fwasm-native-udp#200b7edc822abf92af639d27c77b61f17091d3c6"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3121,8 +3118,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "wasm-native-udp",
  "web-sys",
+ "webview-sockets",
  "windows",
  "windows-result",
  "wmi",
@@ -4872,7 +4869,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5630,18 +5627,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f37b4f992cebe528ef34964ae69681ac0fe7080071e7298e46008f9d380302af"
 
 [[package]]
-name = "wasm-native-udp"
-version = "0.1.6"
-dependencies = [
- "iroh-link-udp-proto",
- "js-sys",
- "tracing",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "wasm-streams"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5702,6 +5687,24 @@ checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]
+
+[[package]]
+name = "webview-sockets"
+version = "0.1.0"
+source = "git+ssh://git@github.com/Frando/webview-sockets.git?branch=main#3b8ee042a80a83bcd63a23ec38aa859c1ecc4c30"
+dependencies = [
+ "js-sys",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "webview-sockets-proto",
+]
+
+[[package]]
+name = "webview-sockets-proto"
+version = "0.1.0"
+source = "git+ssh://git@github.com/Frando/webview-sockets.git?branch=main#3b8ee042a80a83bcd63a23ec38aa859c1ecc4c30"
 
 [[package]]
 name = "whoami"

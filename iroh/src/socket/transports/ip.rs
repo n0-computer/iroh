@@ -483,7 +483,7 @@ impl IpTransports {
         })
     }
 
-    /// Waits until the iroh-link host confirmed the bind of every socket.
+    /// Waits until the webview-sockets host confirmed the bind of every socket.
     ///
     /// Drops non required sockets whose bind failed and updates the local addresses
     /// to the ports the host assigned.

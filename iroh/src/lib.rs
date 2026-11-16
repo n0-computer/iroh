@@ -245,14 +245,15 @@
 //! # Native UDP in the browser
 //!
 //! In browsers iroh only has relay connections. Built with
-//! `RUSTFLAGS="--cfg wasm_native_udp"` for `wasm32-unknown-unknown`, the IP
-//! transports stay enabled and use UDP sockets provided by the iroh-link app
-//! through the `wasm-native-udp` crate (re-exported as `netwatch::wasm_native_udp`).
+//! `RUSTFLAGS="--cfg webview_sockets"` for `wasm32-unknown-unknown`, the IP
+//! transports stay enabled and use UDP sockets provided by the app that embeds
+//! the webview, through the [webview-sockets] crate (re-exported as
+//! `netwatch::webview_sockets`).
 //!
-//! - Call `wasm_native_udp::init().await` before [`Endpoint::bind`]. It may show a
-//!   permission prompt. Without it, binding the default IP transports fails.
-//! - If the page does not run inside iroh-link, the default IP transports are
-//!   dropped and the endpoint is relay only.
+//! - Call `webview_sockets::init().await` before [`Endpoint::bind`]. It may show
+//!   a permission prompt. Without it, binding the default IP transports fails.
+//! - If the page does not run in a webview-sockets host, the default IP
+//!   transports are dropped and the endpoint is relay only.
 //! - Direct addresses are the host's interface addresses. Address discovery
 //!   via the relays (QAD) is not done in the browser, since there is no DNS
 //!   resolver for relay hostnames, so public addresses behind a NAT are not
@@ -260,6 +261,7 @@
 //!
 //!
 //! [QUIC]: https://quicwg.org
+//! [webview-sockets]: https://github.com/Frando/webview-sockets
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html

@@ -412,7 +412,7 @@ impl Transports {
         })
     }
 
-    /// Waits until the iroh-link host confirmed the bind of every IP socket.
+    /// Waits until the webview-sockets host confirmed the bind of every IP socket.
     ///
     /// Must run before any sender is created. Non required sockets that fail are dropped.
     #[cfg(all(wasm_browser, ip_transport))]

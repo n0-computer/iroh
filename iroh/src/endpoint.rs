@@ -225,7 +225,7 @@ impl Builder {
 
     /// Binds the endpoint.
     ///
-    /// In the browser with `--cfg wasm_native_udp`, call `wasm_native_udp::init()`
+    /// In the browser with `--cfg webview_sockets`, call `webview_sockets::init()`
     /// first, see the [crate docs](crate#native-udp-in-the-browser).
     #[instrument(name = "endpoint", skip_all, fields(id))]
     pub async fn bind(self) -> Result<Endpoint, BindError> {
@@ -271,11 +271,11 @@ impl Builder {
                 .build()
         });
 
-        // Without the iroh-link host, fall back to relay only instead of failing.
+        // Without a webview-sockets host, fall back to relay only instead of failing.
         #[cfg(all(wasm_browser, ip_transport))]
         let transports = {
             let mut transports = self.transports;
-            if !netwatch::wasm_native_udp::is_available() {
+            if !netwatch::webview_sockets::is_available() {
                 warn!("native UDP unavailable, using relay only");
                 transports.retain(|t| {
                     !matches!(
