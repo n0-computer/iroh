@@ -54,3 +54,5 @@ Smartphone<!-- (please complete the following information) -->:
 <!-- Thank you for caring about iroh! Please read out AI policy before submitting: -->
 
 - [ ] I have read and respected the [AI policy] (it's not long!).
+
+[AI policy]: https://github.com/n0-computer/iroh/blob/main/AI_POLICY.md
