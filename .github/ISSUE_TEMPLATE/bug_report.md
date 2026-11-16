@@ -51,7 +51,8 @@ Smartphone<!-- (please complete the following information) -->:
 <!-- Add any other context about the problem here. -->
 
 **Collaboration**
-<!-- Thank you for caring about iroh! Please read out AI policy before submitting: -->
+<!-- Thank you for caring about iroh! -->
+<!-- We find our AI policy very helpful, please take a look: -->
 
 - [ ] I have read and respected the [AI policy] (it's not long!).
 
