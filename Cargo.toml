@@ -64,4 +64,4 @@ noq = { git = "https://github.com/n0-computer/noq", branch = "main" }
 noq-proto = { git = "https://github.com/n0-computer/noq", branch = "main" }
 noq-udp = { git = "https://github.com/n0-computer/noq", branch = "main" }
 # Fork with a UdpSocket backed by wasm-native-udp under `--cfg wasm_native_udp`.
-netwatch = { path = "/home/bit/Code/rust/iroh-content-discovery/.claude/worktrees/net-tools/netwatch" }
+netwatch = { path = "../net-tools/netwatch" }
