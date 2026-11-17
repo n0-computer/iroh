@@ -112,8 +112,9 @@ pub enum SendError {
         /// The size of the packet that was too large
         size: usize,
     },
-    /// Attempte to send an empty packet
-    #[deprecated(note = "no longer returned: empty datagrams are forwarded")]
+    /// Attempt to send an empty packet
+    ///
+    /// Deprecated: no longer returned. Will be marked `#[deprecated]` in the next minor release.
     #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
