@@ -268,6 +268,11 @@ impl RelayNetworkChangeSender {
         Ok(())
     }
 
+    /// Notifies the relay actor that the [`iroh_relay::RelayMap`] was modified.
+    pub(super) fn on_relay_map_change(&self) {
+        self.send_relay_actor(RelayActorMessage::RelayMapChange);
+    }
+
     fn send_relay_actor(&self, msg: RelayActorMessage) {
         match self.sender.try_send(msg) {
             Ok(_) => {}

@@ -40,7 +40,7 @@ use std::{
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
-    self as relay, PingTracker, RelayMap,
+    self as relay, PingTracker, RelayConfig, RelayMap,
     client::{Client, ConnectError, RecvError, SendError},
     protos::{
         handshake,
@@ -905,6 +905,11 @@ pub(super) enum RelayActorMessage {
     /// Sent after a major network change to detect broken connections faster
     /// using RTT-based timeouts instead of the default 5s ping timeout.
     CheckConnectionAfterNetworkChange,
+    /// The [`RelayMap`] was modified.
+    ///
+    /// Any [`ActiveRelayActor`] whose [`RelayConfig`] was replaced is restarted, so that the
+    /// new configuration (e.g. a new auth token) is used for the connection.
+    RelayMapChange,
 }
 
 #[derive(Debug, Clone)]
@@ -1195,6 +1200,9 @@ impl RelayActor {
             RelayActorMessage::CheckConnectionAfterNetworkChange => {
                 self.check_connection_after_network_change().await;
             }
+            RelayActorMessage::RelayMapChange => {
+                self.restart_relays_with_changed_config();
+            }
         }
     }
 
@@ -1341,11 +1349,8 @@ impl RelayActor {
     fn start_active_relay(&mut self, url: RelayUrl) -> ActiveRelayHandle {
         debug!(?url, "Adding relay connection");
 
-        let auth_token = self
-            .config
-            .relay_map
-            .get(&url)
-            .and_then(|cfg| cfg.auth_token.clone());
+        let relay_config = self.config.relay_map.get(&url);
+        let auth_token = relay_config.as_ref().and_then(|cfg| cfg.auth_token.clone());
         let connection_opts = RelayConnectionOptions {
             secret_key: self.config.secret_key.clone(),
             #[cfg(not(wasm_browser))]
@@ -1361,6 +1366,7 @@ impl RelayActor {
         let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(32);
         let (inbox_tx, inbox_rx) = mpsc::channel(64);
         let span = info_span!("active-relay", %url);
+        let stop_token = self.cancel_token.child_token();
         let opts = ActiveRelayActorOptions {
             url,
             prio_inbox_: prio_inbox_rx,
@@ -1368,7 +1374,7 @@ impl RelayActor {
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
             connection_opts,
-            stop_token: self.cancel_token.child_token(),
+            stop_token: stop_token.clone(),
             metrics: self.config.metrics.clone(),
             my_relay: self.config.my_relay.clone(),
         };
@@ -1383,9 +1389,40 @@ impl RelayActor {
             prio_inbox_addr: prio_inbox_tx,
             inbox_addr: inbox_tx,
             datagrams_send_queue: send_datagram_tx,
+            relay_config,
+            stop_token,
         };
         self.log_active_relay();
         handle
+    }
+
+    /// Restarts the [`ActiveRelayActor`]s whose [`RelayConfig`] was replaced in the
+    /// [`RelayMap`].
+    ///
+    /// An [`ActiveRelayActor`] captures its connection options, including the auth token,
+    /// when it is started and keeps re-using them for every reconnect.  So without a restart
+    /// a replaced configuration would only take effect once the actor exits by itself, which
+    /// for the home relay never happens.
+    ///
+    /// Relays which were removed from the map are left alone: their connections close once
+    /// they are no longer the home relay and become inactive, as before.
+    fn restart_relays_with_changed_config(&mut self) {
+        let changed: Vec<RelayUrl> = self
+            .active_relays
+            .iter()
+            .filter_map(|(url, handle)| {
+                let current = self.config.relay_map.get(url)?;
+                (handle.relay_config.as_deref() != Some(&*current)).then(|| url.clone())
+            })
+            .collect();
+        for url in changed {
+            info!(%url, "relay config changed, restarting relay connection");
+            if let Some(handle) = self.active_relays.remove(&url) {
+                handle.stop_token.cancel();
+            }
+            // Re-creates the actor right away, which also re-applies the home relay status.
+            self.active_relay_handle(url);
+        }
     }
 
     /// Triggers an immediate health check on all relay connections after a network change.
@@ -1493,6 +1530,10 @@ struct ActiveRelayHandle {
     prio_inbox_addr: mpsc::Sender<ActiveRelayPrioMessage>,
     inbox_addr: mpsc::Sender<ActiveRelayMessage>,
     datagrams_send_queue: mpsc::Sender<RelaySendItem>,
+    /// The [`RelayConfig`] the actor was started with, if the relay was in the [`RelayMap`].
+    relay_config: Option<Arc<RelayConfig>>,
+    /// Stops this actor only, used to restart it when its [`RelayConfig`] changes.
+    stop_token: CancellationToken,
 }
 
 /// A single datagram received from a relay server.

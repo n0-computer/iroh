@@ -1760,6 +1760,7 @@ impl Actor {
     }
 
     fn handle_relay_map_change(&mut self) {
+        self.transports_network_change.on_relay_map_change();
         self.re_stun(UpdateReason::RelayMapChange);
     }
 
