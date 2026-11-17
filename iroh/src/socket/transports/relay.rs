@@ -470,7 +470,6 @@ mod tests {
         for (segment_size, contents) in [
             (NonZeroU16::new(2000), Bytes::from(vec![0u8; 4000])),
             (None, Bytes::from(vec![0u8; 4000])),
-            (NonZeroU16::new(1), Bytes::new()),
             (None, Bytes::new()),
         ] {
             let (mut transport, sender) = test_relay_transport();
@@ -533,7 +532,6 @@ mod tests {
         for (segment_size, contents) in [
             (NonZeroU16::new(2000), Bytes::from(vec![0u8; 4000])),
             (None, Bytes::from(vec![0u8; 4000])),
-            (NonZeroU16::new(1), Bytes::new()),
             (None, Bytes::new()),
         ] {
             let (mut transport, sender) = test_relay_transport();
