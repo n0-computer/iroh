@@ -24,6 +24,8 @@ yanked = "deny"
 ignore = [
   "RUSTSEC-2024-0436", # paste -> netlink-packet-core
   "RUSTSEC-2023-0089", # unmaintained: postcard -> heapless -> atomic-polyfill
+  "RUSTSEC-2026-0542", # unmaintained: humantime, via iroh-dns-server, humantime-serde, n0-qlog
+  "RUSTSEC-2026-0543", # unmaintained: chrono, via netwatch, wmi, tokio-rustls-acme, patchbay
 ]
 
 [sources]
