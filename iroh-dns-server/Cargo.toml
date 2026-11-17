@@ -44,7 +44,7 @@ regex = "1.10.3"
 rustls = { version = "0.23.46", default-features = false }
 serde = { version = "1", features = ["derive"] }
 socket2 = "0.6"
-n0-error = "1.0.0"
+n0-error = "1.0.3"
 strum = { version = "0.28", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging"] }
@@ -63,7 +63,7 @@ url = "2.5.3"
 criterion = "0.8.0"
 data-encoding = "2.3.3"
 iroh = { path = "../iroh" }
-n0-error = { version = "1.0.0", features = ["anyhow"] }
+n0-error = { version = "1.0.3", features = ["anyhow"] }
 n0-tracing-test = "0.3"
 rand = "0.10"
 simple-dns = "0.12"

@@ -112,6 +112,10 @@ pub enum SendError {
         /// The size of the packet that was too large
         size: usize,
     },
+    /// Attempte to send an empty packet
+    #[deprecated(note = "no longer returned: empty datagrams are forwarded")]
+    #[error("Attempted to send empty packet")]
+    EmptyPacket {},
 }
 
 impl<S> Sink<RelayToClientMsg> for RelayedStream<S>

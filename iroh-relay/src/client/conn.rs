@@ -40,6 +40,9 @@ pub enum SendError {
     StreamError { source: AnyError },
     #[error("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}")]
     ExceedsMaxPacketSize { size: usize },
+    #[deprecated(note = "no longer returned: empty datagrams are valid to send")]
+    #[error("Attempted to send empty packet")]
+    EmptyPacket {},
 }
 
 /// Errors when receiving messages from the relay server.

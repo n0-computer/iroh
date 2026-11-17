@@ -23,7 +23,7 @@ derive_more = { version = "2.0.1", features = ["debug", "display"], optional = t
 url = { version = "2.5.3", features = ["serde"], optional = true }
 rand = { version = "0.10", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
-n0-error = "1.0.0"
+n0-error = "1.0.3"
 zeroize = { version = "1.9", optional = true, features = ["derive"] }
 tracing = { version = "0.1", optional = true }
 
