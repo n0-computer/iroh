@@ -569,28 +569,27 @@ impl<'conn> PathListStream<'conn> {
         &mut self,
         mut f: impl FnMut(&PathList<'conn>) -> Option<T>,
     ) -> Option<(T, &PathList<'conn>)> {
-        self.refresh();
         loop {
-            let paths = self.next_value.as_ref().expect("set by refresh");
+            let paths = self.current();
             if paths.snapshot.closed {
+                self.next_value = Some(paths);
                 return None;
             }
-            if let Some(value) = f(paths) {
-                return Some((value, self.next_value.as_ref().expect("set by refresh")));
+            if let Some(value) = f(&paths) {
+                return Some((value, self.next_value.insert(paths)));
             }
+            self.next_value = Some(paths);
             std::future::poll_fn(|cx| self.notified.as_mut().poll(cx)).await;
-            self.refresh();
         }
     }
 
-    /// Re-arms [`Self::notified`], then stores the current state in [`Self::next_value`].
-    fn refresh(&mut self) {
+    /// Re-arms [`Self::notified`], then returns the current state.
+    fn current(&mut self) -> PathList<'conn> {
         self.notified.set(self.shared.notify.notified());
-        let snapshot = self.shared.state.lock().expect("poisoned").clone();
-        self.next_value = Some(PathList {
-            snapshot,
+        PathList {
+            snapshot: self.shared.state.lock().expect("poisoned").clone(),
             conn: self.conn,
-        });
+        }
     }
 }
 
@@ -599,11 +598,13 @@ impl<'conn> Stream for PathListStream<'conn> {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        if this.next_value.is_none() {
-            std::task::ready!(this.notified.as_mut().poll(cx));
-            this.refresh();
-        }
-        let paths = this.next_value.take().expect("set by refresh");
+        let paths = match this.next_value.take() {
+            Some(paths) => paths,
+            None => {
+                std::task::ready!(this.notified.as_mut().poll(cx));
+                this.current()
+            }
+        };
         if paths.snapshot.closed {
             // Keep it so later polls end too.
             this.next_value = Some(paths);
