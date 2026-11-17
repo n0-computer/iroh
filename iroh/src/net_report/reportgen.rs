@@ -15,7 +15,7 @@
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
 //! - Sends the completed report to the net_report actor.
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use std::net::{SocketAddrV4, SocketAddrV6};
 use std::{
     collections::BTreeSet,
@@ -27,7 +27,7 @@ use http::StatusCode;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
 use iroh_dns::dns::{DnsError, DnsResolver, StaggeredError};
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use iroh_relay::quic::QuicClient;
 use iroh_relay::{
     RelayConfig, RelayMap, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_RELATIVE_PATH,
@@ -100,17 +100,31 @@ impl From<netwatch::netmon::State> for IfStateDetails {
 
 /// Any state that depends on sockets being available in the current environment.
 ///
-/// Factored out so it can be disabled easily in browsers.
-#[cfg(not(wasm_browser))]
+/// Factored out so it can be disabled easily in browsers. In browsers with
+/// `--cfg webview_sockets` only the QUIC address discovery part exists.
+#[cfg(ip_transport)]
 #[derive(Debug, Clone)]
 pub(super) struct SocketState {
     /// QUIC client to do QUIC address Discovery
     pub(super) quic_client: Option<QuicClient>,
     /// The DNS resolver to use for probes that need to resolve DNS records.
-    pub(super) dns_resolver: DnsResolver,
+    pub(super) dns_resolver: RelayResolver,
     /// The proxy to send the HTTP(S) based probes through, if any.
+    #[cfg(not(wasm_browser))]
     pub(super) proxy_url: Option<Url>,
 }
+
+/// Resolves relay host names for QUIC address discovery.
+#[cfg(not(wasm_browser))]
+pub(super) type RelayResolver = DnsResolver;
+
+/// Resolves relay host names for QUIC address discovery.
+///
+/// A web page cannot look up names. The webview-sockets host app resolves
+/// them: a socket connected to `host:port` reports the resolved peer address.
+#[cfg(all(wasm_browser, ip_transport))]
+#[derive(Debug, Clone, Default)]
+pub(super) struct RelayResolver;
 
 impl Client {
     /// Creates a new actor generating a single report.
@@ -430,26 +444,26 @@ impl Actor {
 /// The result of running a probe.
 #[derive(Debug, Clone)]
 pub(super) enum ProbeReport {
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     QadIpv4(QadProbeReport),
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     QadIpv6(QadProbeReport),
     Https(HttpsProbeReport),
 }
 
 impl ProbeReport {
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(super) fn is_udp(&self) -> bool {
         matches!(self, Self::QadIpv4(_) | Self::QadIpv6(_))
     }
 
-    #[cfg(wasm_browser)]
+    #[cfg(not(ip_transport))]
     pub(super) fn is_udp(&self) -> bool {
         false
     }
 }
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct QadProbeReport {
     /// The relay that was probed
@@ -536,7 +550,7 @@ impl Probe {
                     Err(err) => Err(e!(ProbeError::Https, err)),
                 }
             }
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             Probe::QadIpv4 | Probe::QadIpv6 => unreachable!("must not be used"),
         };
         debug!(?report, "probe finished");
@@ -647,7 +661,7 @@ async fn check_captive_portal(
 }
 
 /// Returns the proper port based on the protocol of the probe.
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
     if let Some(ref quic) = relay.quic {
         if quic.port == 0 {
@@ -660,7 +674,7 @@ fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
     }
 }
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(super) enum GetRelayAddrError {
@@ -671,8 +685,15 @@ pub(super) enum GetRelayAddrError {
         url: RelayUrl,
         addr_type: &'static str,
     },
+    #[cfg(not(wasm_browser))]
     #[error("DNS lookup failed")]
     DnsLookup { source: StaggeredError<DnsError> },
+    #[cfg(wasm_browser)]
+    #[error("Name lookup through the host app failed")]
+    HostLookup {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[error("Relay is not suitable")]
     UnsupportedRelay,
     #[error("HTTPS probes are not implemented")]
@@ -698,6 +719,92 @@ pub(super) async fn get_relay_addr_ipv6(
 ) -> Result<SocketAddrV6, GetRelayAddrError> {
     let port = get_quic_port(relay).ok_or_else(|| e!(GetRelayAddrError::MissingPort))?;
     relay_lookup_ipv6_staggered(dns_resolver, relay, port).await
+}
+
+/// Returns the IPv4 address to use to communicate to this relay for quic.
+#[cfg(all(wasm_browser, ip_transport))]
+pub(super) async fn get_relay_addr_ipv4(
+    _resolver: &RelayResolver,
+    relay: &RelayConfig,
+) -> Result<SocketAddrV4, GetRelayAddrError> {
+    use netwatch::webview_sockets::DnsQueryType;
+
+    let port = get_quic_port(relay).ok_or_else(|| e!(GetRelayAddrError::MissingPort))?;
+    match host_lookup(relay, port, DnsQueryType::Ipv4, "A").await? {
+        SocketAddr::V4(addr) => Ok(addr),
+        SocketAddr::V6(addr) => match addr.ip().to_ipv4_mapped() {
+            Some(ip) => Ok(SocketAddrV4::new(ip, port)),
+            None => Err(e!(GetRelayAddrError::NoAddrFound {
+                url: relay.url.clone(),
+                addr_type: "A",
+            })),
+        },
+    }
+}
+
+/// Returns the IPv6 address to use to communicate to this relay for quic.
+#[cfg(all(wasm_browser, ip_transport))]
+pub(super) async fn get_relay_addr_ipv6(
+    _resolver: &RelayResolver,
+    relay: &RelayConfig,
+) -> Result<SocketAddrV6, GetRelayAddrError> {
+    use netwatch::webview_sockets::DnsQueryType;
+
+    let port = get_quic_port(relay).ok_or_else(|| e!(GetRelayAddrError::MissingPort))?;
+    match host_lookup(relay, port, DnsQueryType::Ipv6, "AAAA").await? {
+        SocketAddr::V6(addr) => Ok(addr),
+        SocketAddr::V4(_) => Err(e!(GetRelayAddrError::NoAddrFound {
+            url: relay.url.clone(),
+            addr_type: "AAAA",
+        })),
+    }
+}
+
+/// Resolves the relay host through the webview-sockets host app.
+///
+/// IP literals need no lookup. For names, a socket connected to `host:port`
+/// makes the host app resolve the name, and its peer address is the result.
+#[cfg(all(wasm_browser, ip_transport))]
+async fn host_lookup(
+    relay: &RelayConfig,
+    port: u16,
+    family: netwatch::webview_sockets::DnsQueryType,
+    addr_type: &'static str,
+) -> Result<SocketAddr, GetRelayAddrError> {
+    use netwatch::webview_sockets::{DnsQueryType, UdpSocket};
+
+    let hostname = match relay.url.host() {
+        Some(url::Host::Domain(hostname)) => hostname,
+        Some(url::Host::Ipv4(ip)) if family == DnsQueryType::Ipv4 => {
+            return Ok(SocketAddr::new(ip.into(), port));
+        }
+        Some(url::Host::Ipv6(ip)) if family == DnsQueryType::Ipv6 => {
+            return Ok(SocketAddr::new(ip.into(), port));
+        }
+        Some(_) => {
+            return Err(e!(GetRelayAddrError::NoAddrFound {
+                url: relay.url.clone(),
+                addr_type,
+            }));
+        }
+        None => return Err(e!(GetRelayAddrError::InvalidHostname)),
+    };
+    // The host app may not like the trailing dot of fully qualified names.
+    let hostname = hostname.strip_suffix('.').unwrap_or(hostname);
+    trace!(%hostname, addr_type, "looking up relay addr through the host app");
+    let lookup = async {
+        let socket = UdpSocket::connect_host(hostname, port, Some(family))?;
+        socket.bound().await?;
+        socket.peer_addr()
+    };
+    match time::timeout(super::defaults::timeouts::DNS_TIMEOUT, lookup).await {
+        Ok(Ok(addr)) => Ok(SocketAddr::new(addr.ip().to_canonical(), addr.port())),
+        Ok(Err(err)) => Err(e!(GetRelayAddrError::HostLookup, err)),
+        Err(_) => Err(e!(
+            GetRelayAddrError::HostLookup,
+            std::io::ErrorKind::TimedOut.into()
+        )),
+    }
 }
 
 /// Do a staggared ipv4 DNS lookup based on [`RelayConfig`]

@@ -71,7 +71,7 @@ impl Report {
                 self.relay_latency
                     .update_relay(report.relay.clone(), report.latency, Probe::Https);
             }
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             ProbeReport::QadIpv4(report) => {
                 self.relay_latency.update_relay(
                     report.relay.clone(),
@@ -99,7 +99,7 @@ impl Report {
                 }
                 trace!(?self.global_v4, ?self.mapping_varies_by_dest_ipv4, %ipp, "stored report");
             }
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             ProbeReport::QadIpv6(report) => {
                 self.relay_latency.update_relay(
                     report.relay.clone(),
@@ -134,9 +134,9 @@ impl Report {
 #[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 pub struct RelayLatencies {
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     ipv4: BTreeMap<RelayUrl, Duration>,
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     ipv6: BTreeMap<RelayUrl, Duration>,
     https: BTreeMap<RelayUrl, Duration>,
 }
@@ -146,9 +146,9 @@ impl RelayLatencies {
     pub(super) fn update_relay(&mut self, url: RelayUrl, latency: Duration, probe: Probe) {
         let list = match probe {
             Probe::Https => &mut self.https,
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             Probe::QadIpv4 => &mut self.ipv4,
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             Probe::QadIpv6 => &mut self.ipv6,
         };
         let old_latency = list.entry(url).or_insert(latency);
@@ -164,18 +164,18 @@ impl RelayLatencies {
         for (url, latency) in other.https.iter() {
             self.update_relay(url.clone(), *latency, Probe::Https);
         }
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         for (url, latency) in other.ipv4.iter() {
             self.update_relay(url.clone(), *latency, Probe::QadIpv4);
         }
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         for (url, latency) in other.ipv6.iter() {
             self.update_relay(url.clone(), *latency, Probe::QadIpv6);
         }
     }
 
     /// Returns an iterator over all the relays and their latencies.
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn iter(&self) -> impl Iterator<Item = (Probe, &'_ RelayUrl, Duration)> + '_ {
         self.https
@@ -186,18 +186,18 @@ impl RelayLatencies {
     }
 
     /// Returns an iterator over all the relays and their latencies.
-    #[cfg(wasm_browser)]
+    #[cfg(not(ip_transport))]
     #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
     pub fn iter(&self) -> impl Iterator<Item = (Probe, &'_ RelayUrl, Duration)> + '_ {
         self.https.iter().map(|(k, v)| (Probe::Https, k, *v))
     }
 
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     pub(super) fn is_empty(&self) -> bool {
         self.https.is_empty() && self.ipv4.is_empty() && self.ipv6.is_empty()
     }
 
-    #[cfg(wasm_browser)]
+    #[cfg(not(ip_transport))]
     pub(super) fn is_empty(&self) -> bool {
         self.https.is_empty()
     }
@@ -208,11 +208,11 @@ impl RelayLatencies {
         if let Some(val) = self.https.get(url) {
             list.push(*val);
         }
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         if let Some(val) = self.ipv4.get(url) {
             list.push(*val);
         }
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         if let Some(val) = self.ipv6.get(url) {
             list.push(*val);
         }

@@ -26,10 +26,10 @@ pub enum Probe {
     /// HTTPS
     Https,
     /// QUIC Address Discovery Ipv4
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     QadIpv4,
     /// QUIC Address Discovery Ipv6
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     QadIpv6,
 }
 

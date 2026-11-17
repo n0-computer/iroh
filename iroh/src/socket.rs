@@ -63,7 +63,7 @@ use self::{
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use crate::net_report::QuicConfig;
 use crate::{
     address_lookup::{self, AddressLookupFailed, EndpointData, UserData},
@@ -971,13 +971,13 @@ impl EndpointInner {
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         let has_ipv6_transport = transports
             .ip_bind_addrs()
             .into_iter()
             .any(|addr| addr.is_ipv6());
 
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         let has_ip_transports = !transports.ip_bind_addrs().is_empty();
 
         let direct_addrs = DiscoveredDirectAddrs::default();
@@ -1065,7 +1065,19 @@ impl EndpointInner {
                 .net_report_config(net_report_config)
         };
 
-        #[cfg(wasm_browser)]
+        // With webview-sockets the endpoint has IP transports in the browser
+        // too, so QAD works the same way.
+        #[cfg(all(wasm_browser, ip_transport))]
+        let net_report_config = net_report::Options::default()
+            .quic_config(has_ip_transports.then(|| QuicConfig {
+                ep: endpoint.clone(),
+                client_config: tls_config.clone(),
+                ipv4: true,
+                ipv6: has_ipv6_transport,
+            }))
+            .net_report_config(net_report_config);
+
+        #[cfg(not(ip_transport))]
         let net_report_config = net_report::Options::default().net_report_config(net_report_config);
 
         let net_reporter = net_report::Client::new(

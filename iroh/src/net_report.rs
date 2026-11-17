@@ -18,29 +18,28 @@ use defaults::timeouts::PROBES_TIMEOUT;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
 use iroh_dns::dns::DnsResolver;
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use iroh_relay::{RelayConfig, quic::QuicClient};
 use iroh_relay::{
     RelayMap,
     quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
 };
 use n0_error::e;
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use n0_error::stack_error;
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use n0_future::task;
 use n0_future::{
     StreamExt,
-    task::AbortOnDropHandle,
+    task::{AbortOnDropHandle, JoinSet},
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
 use self::reportgen::{ProbeFinished, ProbeReport};
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 use self::reportgen::{QadProbeReport, SocketState};
 #[cfg_attr(not(feature = "unstable-net-report"), allow(unreachable_pub))]
 pub use self::{
@@ -62,7 +61,7 @@ mod probes;
 mod report;
 mod reportgen;
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
@@ -135,12 +134,12 @@ const ENOUGH_ENDPOINTS: usize = 3;
 /// Client to run net_reports.
 #[derive(Debug)]
 pub(crate) struct Client {
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     socket_state: SocketState,
     metrics: Arc<Metrics>,
     probes: BTreeSet<Probe>,
     relay_map: RelayMap,
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     qad_conns: QadConns,
     #[cfg(not(wasm_browser))]
     tls_config: rustls::ClientConfig,
@@ -152,14 +151,14 @@ pub(crate) struct Client {
     reports: Reports,
 }
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 #[derive(Debug, Default)]
 struct QadConns {
     v4: Option<(RelayUrl, QadConn)>,
     v6: Option<(RelayUrl, QadConn)>,
 }
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 impl QadConns {
     fn clear(&mut self) {
         if let Some((_, conn)) = self.v4.take() {
@@ -222,7 +221,7 @@ impl QadConns {
     }
 }
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 #[derive(Debug)]
 struct QadConn {
     conn: noq::Connection,
@@ -263,7 +262,7 @@ impl Client {
     ) -> Self {
         let probes = opts.as_protocols();
 
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         let quic_client = opts
             .quic_config
             .map(|c| iroh_relay::quic::QuicClient::new(c.ep, c.client_config));
@@ -274,15 +273,22 @@ impl Client {
             dns_resolver,
             proxy_url: opts.proxy_url,
         };
+        // In browsers with webview-sockets only QUIC address discovery uses
+        // sockets, and the host app resolves the relay names.
+        #[cfg(all(wasm_browser, ip_transport))]
+        let socket_state = SocketState {
+            quic_client,
+            dns_resolver: reportgen::RelayResolver,
+        };
 
         Client {
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             socket_state,
             metrics,
             reports: Reports::default(),
             probes,
             relay_map,
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             qad_conns: QadConns::default(),
             #[cfg(not(wasm_browser))]
             tls_config: opts.tls_config,
@@ -327,7 +333,14 @@ impl Client {
 
         let num_relays = self.relay_map.len();
         let enough_relays = std::cmp::min(num_relays, ENOUGH_ENDPOINTS);
-        #[cfg(wasm_browser)]
+        // A page sees no interfaces. With webview-sockets, assume IPv4, and
+        // IPv6 if QUIC address discovery is set up for it.
+        #[cfg(all(wasm_browser, ip_transport))]
+        let if_state = IfStateDetails {
+            have_v4: self.probes.contains(&Probe::QadIpv4),
+            have_v6: self.probes.contains(&Probe::QadIpv6),
+        };
+        #[cfg(all(wasm_browser, not(ip_transport)))]
         let if_state = IfStateDetails::default();
         #[cfg(not(wasm_browser))]
         let if_state = IfStateDetails {
@@ -351,7 +364,7 @@ impl Client {
             self.tls_config.clone(),
         );
 
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         let reports = self
             .spawn_qad_probes(
                 &if_state,
@@ -361,7 +374,7 @@ impl Client {
             )
             .await;
 
-        #[cfg(not(wasm_browser))]
+        #[cfg(ip_transport)]
         for r in reports {
             report.update(&r);
         }
@@ -372,13 +385,13 @@ impl Client {
             // shuts down the probes
             drop(actor);
         } else {
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             let mut qad_v4_stream = self.qad_conns.watch_v4();
-            #[cfg(wasm_browser)]
+            #[cfg(not(ip_transport))]
             let mut qad_v4_stream = n0_future::stream::empty::<Option<()>>();
-            #[cfg(not(wasm_browser))]
+            #[cfg(ip_transport)]
             let mut qad_v6_stream = self.qad_conns.watch_v6();
-            #[cfg(wasm_browser)]
+            #[cfg(not(ip_transport))]
             let mut qad_v6_stream = n0_future::stream::empty::<Option<()>>();
 
             loop {
@@ -386,7 +399,7 @@ impl Client {
                     biased;
 
                     Some(Some(r)) = qad_v4_stream.next() => {
-                        #[cfg(not(wasm_browser))]
+                        #[cfg(ip_transport)]
                         {
                             trace!(?r, "new report from QAD V4");
                             report.update(&ProbeReport::QadIpv4(r));
@@ -394,7 +407,7 @@ impl Client {
                     }
 
                     Some(Some(r)) = qad_v6_stream.next() => {
-                        #[cfg(not(wasm_browser))]
+                        #[cfg(ip_transport)]
                         {
                             trace!(?r, "new report from QAD V6");
                             report.update(&ProbeReport::QadIpv6(r));
@@ -439,7 +452,7 @@ impl Client {
         report
     }
 
-    #[cfg(not(wasm_browser))]
+    #[cfg(ip_transport)]
     async fn spawn_qad_probes(
         &mut self,
         if_state: &IfStateDetails,
@@ -665,18 +678,18 @@ impl Client {
         num_relays: usize,
         report: &Report,
     ) -> bool {
-        #[cfg_attr(wasm_browser, allow(unused_mut))]
+        #[cfg_attr(not(ip_transport), allow(unused_mut))]
         let mut num_ipv4 = 0;
-        #[cfg_attr(wasm_browser, allow(unused_mut))]
+        #[cfg_attr(not(ip_transport), allow(unused_mut))]
         let mut num_ipv6 = 0;
         let mut num_https = 0;
         for (typ, _, _) in report.relay_latency.iter() {
             match typ {
-                #[cfg(not(wasm_browser))]
+                #[cfg(ip_transport)]
                 Probe::QadIpv4 => {
                     num_ipv4 += 1;
                 }
-                #[cfg(not(wasm_browser))]
+                #[cfg(ip_transport)]
                 Probe::QadIpv6 => {
                     num_ipv6 += 1;
                 }
@@ -822,11 +835,11 @@ impl Client {
     }
 }
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 async fn run_probe_v4(
     relay: Arc<RelayConfig>,
     quic_client: QuicClient,
-    dns_resolver: DnsResolver,
+    dns_resolver: reportgen::RelayResolver,
     shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
     use noq_proto::PathId;
@@ -888,11 +901,11 @@ async fn run_probe_v4(
     ))
 }
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 async fn run_probe_v6(
     relay: Arc<RelayConfig>,
     quic_client: QuicClient,
-    dns_resolver: DnsResolver,
+    dns_resolver: reportgen::RelayResolver,
     shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
     use noq_proto::PathId;
@@ -954,7 +967,7 @@ async fn run_probe_v6(
     ))
 }
 
-#[cfg(not(wasm_browser))]
+#[cfg(ip_transport)]
 fn relay_tls_server_name(relay: &RelayConfig) -> Option<std::borrow::Cow<'_, str>> {
     // host_str() includes brackets around IPv6 literals.
     match relay.url.host()? {

@@ -81,27 +81,31 @@ mod imp {
 mod imp {
     use std::collections::BTreeSet;
 
+    #[cfg(ip_transport)]
+    use crate::net_report::QuicConfig;
     use crate::net_report::{NetReportConfig, Probe};
 
     /// Options for running probes (in browsers).
     ///
-    /// Only HTTPS probes are supported in browsers.
-    /// These are run by default.
-    #[derive(Debug, Clone)]
+    /// HTTPS probes run by default. With `--cfg webview_sockets`, QUIC address
+    /// discovery runs too once [`Options::quic_config`] is set.
+    #[derive(Debug, Clone, Default)]
     pub(crate) struct Options {
+        /// The configuration needed to launch QUIC address discovery probes.
+        #[cfg(ip_transport)]
+        pub(crate) quic_config: Option<QuicConfig>,
         /// User-facing configuration.
         pub(crate) user_config: NetReportConfig,
     }
 
-    impl Default for Options {
-        fn default() -> Self {
-            Self {
-                user_config: NetReportConfig::default(),
-            }
-        }
-    }
-
     impl Options {
+        /// Enable quic probes
+        #[cfg(ip_transport)]
+        pub(crate) fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
+            self.quic_config = quic_config;
+            self
+        }
+
         /// Set the net report configuration.
         pub(crate) fn net_report_config(mut self, config: NetReportConfig) -> Self {
             self.user_config = config;
@@ -111,6 +115,15 @@ mod imp {
         /// Turn the options into set of valid protocols
         pub(crate) fn as_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
+            #[cfg(ip_transport)]
+            if let Some(ref quic) = self.quic_config {
+                if quic.ipv4 {
+                    protocols.insert(Probe::QadIpv4);
+                }
+                if quic.ipv6 {
+                    protocols.insert(Probe::QadIpv6);
+                }
+            }
             if self.user_config.https_probes {
                 protocols.insert(Probe::Https);
             }
