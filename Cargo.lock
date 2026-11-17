@@ -5691,7 +5691,7 @@ dependencies = [
 [[package]]
 name = "webview-sockets"
 version = "0.1.0"
-source = "git+ssh://git@github.com/Frando/webview-sockets.git?branch=main#f97a34e50903877100bd71b8c6bef54971fd08ac"
+source = "git+ssh://git@github.com/Frando/webview-sockets.git?branch=main#d0478547f93dab4818931f856b8b8c7be927444d"
 dependencies = [
  "js-sys",
  "tracing",
@@ -5704,7 +5704,7 @@ dependencies = [
 [[package]]
 name = "webview-sockets-proto"
 version = "0.1.0"
-source = "git+ssh://git@github.com/Frando/webview-sockets.git?branch=main#f97a34e50903877100bd71b8c6bef54971fd08ac"
+source = "git+ssh://git@github.com/Frando/webview-sockets.git?branch=main#d0478547f93dab4818931f856b8b8c7be927444d"
 
 [[package]]
 name = "whoami"
