@@ -2,6 +2,10 @@
 
 use std::time::Duration;
 
+use iroh::{
+    TransportAddr,
+    endpoint::{Connection, PathId},
+};
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr};
 use n0_future::StreamExt;
 use n0_tracing_test::traced_test;
@@ -10,13 +14,13 @@ use patchbay::Firewall;
 use testdir::testdir;
 use tracing::info;
 
-use super::util::{Pair, PathConnectionExt, lab_with_relay, ping_accept, ping_open};
+use super::util::{Pair, lab_with_relay, ping_accept, ping_open};
 
 /// Verifies that stream affinity works end-to-end.
 ///
 /// This test sets up two endpoints connected through two network links, one that
-/// has a relay server but UDP blocked, and one with direct connectivity but no
-/// upstream connetivity to the relay. It then connects them over the relay link,
+/// reaches the relay server but has UDP blocked, and a shared LAN that only
+/// carries direct traffic. It then connects them over the relay link,
 /// waits for the connection to become direct, opens a send stream that is sticky
 /// to the direct link, brings the direct interface down, and observes that the
 /// stream is blocked while only the relay path is available.
@@ -35,13 +39,10 @@ async fn sticky_direct_survives_outage() -> Result {
         .firewall(Firewall::Corporate)
         .build()
         .await?;
-    // eth1 connects both peers on the same LAN. Block all forwarded TCP/UDP
-    // so this network cannot reach the relay; local bridge traffic still works.
-    let lan = lab
-        .add_router("lan")
-        .firewall_custom(|f| f.block_tcp().block_udp())
-        .build()
-        .await?;
+    // eth1 connects both peers on the same LAN. Only eth0 has a default route,
+    // so eth1 carries just the on-link direct path. No firewall here: with
+    // br_netfilter loaded, forward rules would also drop the bridged LAN traffic.
+    let lan = lab.add_router("lan").build().await?;
     let server = lab
         .add_device("server")
         .iface("eth0", wan1.id())
@@ -73,12 +74,13 @@ async fn sticky_direct_survives_outage() -> Result {
             Ok(())
         })
         .client(client, async move |dev, _ep, conn| {
-            let addr = conn.wait_ip(timeout).await.context("initial direct path")?;
+            let (direct, addr) = wait_direct(&conn, timeout)
+                .await
+                .context("initial direct path")?;
             assert!(
-                matches!(addr, iroh::TransportAddr::Ip(addr) if addr.ip() == server_lan_ip),
+                matches!(addr, TransportAddr::Ip(addr) if addr.ip() == server_lan_ip),
                 "direct path uses the LAN"
             );
-            let direct = conn.paths().iter().find(|p| p.is_ip()).unwrap().id();
             let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
             send.set_affinity(StreamAffinity::Sticky(direct)).anyerr()?;
             send.write_all(b"before").await.anyerr()?;
@@ -119,10 +121,9 @@ async fn sticky_direct_survives_outage() -> Result {
 
             info!("bringing the direct LAN interface back up");
             direct_iface.link_up().await?;
-            conn.wait_ip(timeout)
+            let (direct, _) = wait_direct(&conn, timeout)
                 .await
                 .context("restored direct path")?;
-            let direct = conn.paths().iter().find(|p| p.is_ip()).unwrap().id();
             // A closed path's ID need not be reused after recovery.
             send.set_affinity(StreamAffinity::Sticky(direct)).anyerr()?;
             let reply = recv.read_to_end(5).await.anyerr()?;
@@ -135,4 +136,19 @@ async fn sticky_direct_survives_outage() -> Result {
         .std_context("stream affinity test timed out")??;
     guard.ok();
     Ok(())
+}
+
+/// Waits until a direct path is selected and returns its id and remote address.
+async fn wait_direct(conn: &Connection, timeout: Duration) -> Result<(PathId, TransportAddr)> {
+    let mut paths = conn.paths_stream();
+    tokio::time::timeout(timeout, async {
+        while let Some(paths) = paths.next().await {
+            if let Some(path) = paths.iter().find(|p| p.is_ip() && p.is_selected()) {
+                return Ok((path.id(), path.remote_addr().clone()));
+            }
+        }
+        Err(anyerr!("path watcher stopped"))
+    })
+    .await
+    .std_context("no direct path selected")?
 }
