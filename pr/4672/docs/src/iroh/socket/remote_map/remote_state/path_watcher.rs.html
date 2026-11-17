@@ -569,67 +569,68 @@
 <a href=#569 id=569 data-nosnippet>569</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#570 id=570 data-nosnippet>570</a>        <span class="kw-2">mut </span>f: <span class="kw">impl </span>FnMut(<span class="kw-2">&amp;</span>PathList&lt;<span class="lifetime">'conn</span>&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt;,
 <a href=#571 id=571 data-nosnippet>571</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;(T, <span class="kw-2">&amp;</span>PathList&lt;<span class="lifetime">'conn</span>&gt;)&gt; {
-<a href=#572 id=572 data-nosnippet>572</a>        <span class="self">self</span>.refresh();
-<a href=#573 id=573 data-nosnippet>573</a>        <span class="kw">loop </span>{
-<a href=#574 id=574 data-nosnippet>574</a>            <span class="kw">let </span>paths = <span class="self">self</span>.next_value.as_ref().expect(<span class="string">"set by refresh"</span>);
-<a href=#575 id=575 data-nosnippet>575</a>            <span class="kw">if </span>paths.snapshot.closed {
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="kw">loop </span>{
+<a href=#573 id=573 data-nosnippet>573</a>            <span class="kw">let </span>paths = <span class="self">self</span>.current();
+<a href=#574 id=574 data-nosnippet>574</a>            <span class="kw">if </span>paths.snapshot.closed {
+<a href=#575 id=575 data-nosnippet>575</a>                <span class="self">self</span>.next_value = <span class="prelude-val">Some</span>(paths);
 <a href=#576 id=576 data-nosnippet>576</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
 <a href=#577 id=577 data-nosnippet>577</a>            }
-<a href=#578 id=578 data-nosnippet>578</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = f(paths) {
-<a href=#579 id=579 data-nosnippet>579</a>                <span class="kw">return </span><span class="prelude-val">Some</span>((value, <span class="self">self</span>.next_value.as_ref().expect(<span class="string">"set by refresh"</span>)));
+<a href=#578 id=578 data-nosnippet>578</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = f(<span class="kw-2">&amp;</span>paths) {
+<a href=#579 id=579 data-nosnippet>579</a>                <span class="kw">return </span><span class="prelude-val">Some</span>((value, <span class="self">self</span>.next_value.insert(paths)));
 <a href=#580 id=580 data-nosnippet>580</a>            }
-<a href=#581 id=581 data-nosnippet>581</a>            std::future::poll_fn(|cx| <span class="self">self</span>.notified.as_mut().poll(cx)).<span class="kw">await</span>;
-<a href=#582 id=582 data-nosnippet>582</a>            <span class="self">self</span>.refresh();
+<a href=#581 id=581 data-nosnippet>581</a>            <span class="self">self</span>.next_value = <span class="prelude-val">Some</span>(paths);
+<a href=#582 id=582 data-nosnippet>582</a>            std::future::poll_fn(|cx| <span class="self">self</span>.notified.as_mut().poll(cx)).<span class="kw">await</span>;
 <a href=#583 id=583 data-nosnippet>583</a>        }
 <a href=#584 id=584 data-nosnippet>584</a>    }
 <a href=#585 id=585 data-nosnippet>585</a>
-<a href=#586 id=586 data-nosnippet>586</a>    <span class="doccomment">/// Re-arms [`Self::notified`], then stores the current state in [`Self::next_value`].
-<a href=#587 id=587 data-nosnippet>587</a>    </span><span class="kw">fn </span>refresh(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#586 id=586 data-nosnippet>586</a>    <span class="doccomment">/// Re-arms [`Self::notified`], then returns the current state.
+<a href=#587 id=587 data-nosnippet>587</a>    </span><span class="kw">fn </span>current(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; PathList&lt;<span class="lifetime">'conn</span>&gt; {
 <a href=#588 id=588 data-nosnippet>588</a>        <span class="self">self</span>.notified.set(<span class="self">self</span>.shared.notify.notified());
-<a href=#589 id=589 data-nosnippet>589</a>        <span class="kw">let </span>snapshot = <span class="self">self</span>.shared.state.lock().expect(<span class="string">"poisoned"</span>).clone();
-<a href=#590 id=590 data-nosnippet>590</a>        <span class="self">self</span>.next_value = <span class="prelude-val">Some</span>(PathList {
-<a href=#591 id=591 data-nosnippet>591</a>            snapshot,
-<a href=#592 id=592 data-nosnippet>592</a>            conn: <span class="self">self</span>.conn,
-<a href=#593 id=593 data-nosnippet>593</a>        });
-<a href=#594 id=594 data-nosnippet>594</a>    }
-<a href=#595 id=595 data-nosnippet>595</a>}
-<a href=#596 id=596 data-nosnippet>596</a>
-<a href=#597 id=597 data-nosnippet>597</a><span class="kw">impl</span>&lt;<span class="lifetime">'conn</span>&gt; Stream <span class="kw">for </span>PathListStream&lt;<span class="lifetime">'conn</span>&gt; {
-<a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">type </span>Item = PathList&lt;<span class="lifetime">'conn</span>&gt;;
-<a href=#599 id=599 data-nosnippet>599</a>
-<a href=#600 id=600 data-nosnippet>600</a>    <span class="kw">fn </span>poll_next(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-<a href=#601 id=601 data-nosnippet>601</a>        <span class="kw">let </span>this = <span class="self">self</span>.get_mut();
-<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">if </span>this.next_value.is_none() {
-<a href=#603 id=603 data-nosnippet>603</a>            <span class="macro">std::task::ready!</span>(this.notified.as_mut().poll(cx));
-<a href=#604 id=604 data-nosnippet>604</a>            this.refresh();
-<a href=#605 id=605 data-nosnippet>605</a>        }
-<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span>paths = this.next_value.take().expect(<span class="string">"set by refresh"</span>);
-<a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">if </span>paths.snapshot.closed {
-<a href=#608 id=608 data-nosnippet>608</a>            <span class="comment">// Keep it so later polls end too.
-<a href=#609 id=609 data-nosnippet>609</a>            </span>this.next_value = <span class="prelude-val">Some</span>(paths);
-<a href=#610 id=610 data-nosnippet>610</a>            Poll::Ready(<span class="prelude-val">None</span>)
-<a href=#611 id=611 data-nosnippet>611</a>        } <span class="kw">else </span>{
-<a href=#612 id=612 data-nosnippet>612</a>            Poll::Ready(<span class="prelude-val">Some</span>(paths))
-<a href=#613 id=613 data-nosnippet>613</a>        }
-<a href=#614 id=614 data-nosnippet>614</a>    }
-<a href=#615 id=615 data-nosnippet>615</a>}
-<a href=#616 id=616 data-nosnippet>616</a>
-<a href=#617 id=617 data-nosnippet>617</a><span class="doccomment">/// A `'static` stream of [`PathEvent`]s.
-<a href=#618 id=618 data-nosnippet>618</a>///
-<a href=#619 id=619 data-nosnippet>619</a>/// Returned by [`Connection::path_events`].
-<a href=#620 id=620 data-nosnippet>620</a>///
-<a href=#621 id=621 data-nosnippet>621</a>/// [`Connection::path_events`]: crate::endpoint::Connection::path_events
-<a href=#622 id=622 data-nosnippet>622</a></span><span class="attr">#[derive(Debug)]
-<a href=#623 id=623 data-nosnippet>623</a></span><span class="kw">pub struct </span>PathEventStream {
-<a href=#624 id=624 data-nosnippet>624</a>    inner: BroadcastStream&lt;PathEvent&gt;,
-<a href=#625 id=625 data-nosnippet>625</a>}
-<a href=#626 id=626 data-nosnippet>626</a>
-<a href=#627 id=627 data-nosnippet>627</a><span class="kw">impl </span>Stream <span class="kw">for </span>PathEventStream {
-<a href=#628 id=628 data-nosnippet>628</a>    <span class="kw">type </span>Item = PathEvent;
-<a href=#629 id=629 data-nosnippet>629</a>    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-<a href=#630 id=630 data-nosnippet>630</a>        <span class="self">self</span>.inner.poll_next(cx).map(|event| <span class="kw">match </span>event<span class="question-mark">? </span>{
-<a href=#631 id=631 data-nosnippet>631</a>            <span class="prelude-val">Ok</span>(event) =&gt; <span class="prelude-val">Some</span>(event),
-<a href=#632 id=632 data-nosnippet>632</a>            <span class="prelude-val">Err</span>(BroadcastStreamRecvError::Lagged(missed)) =&gt; <span class="prelude-val">Some</span>(PathEvent::Lagged { missed }),
-<a href=#633 id=633 data-nosnippet>633</a>        })
-<a href=#634 id=634 data-nosnippet>634</a>    }
-<a href=#635 id=635 data-nosnippet>635</a>}</code></pre></div></section></main></body></html>
+<a href=#589 id=589 data-nosnippet>589</a>        PathList {
+<a href=#590 id=590 data-nosnippet>590</a>            snapshot: <span class="self">self</span>.shared.state.lock().expect(<span class="string">"poisoned"</span>).clone(),
+<a href=#591 id=591 data-nosnippet>591</a>            conn: <span class="self">self</span>.conn,
+<a href=#592 id=592 data-nosnippet>592</a>        }
+<a href=#593 id=593 data-nosnippet>593</a>    }
+<a href=#594 id=594 data-nosnippet>594</a>}
+<a href=#595 id=595 data-nosnippet>595</a>
+<a href=#596 id=596 data-nosnippet>596</a><span class="kw">impl</span>&lt;<span class="lifetime">'conn</span>&gt; Stream <span class="kw">for </span>PathListStream&lt;<span class="lifetime">'conn</span>&gt; {
+<a href=#597 id=597 data-nosnippet>597</a>    <span class="kw">type </span>Item = PathList&lt;<span class="lifetime">'conn</span>&gt;;
+<a href=#598 id=598 data-nosnippet>598</a>
+<a href=#599 id=599 data-nosnippet>599</a>    <span class="kw">fn </span>poll_next(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+<a href=#600 id=600 data-nosnippet>600</a>        <span class="kw">let </span>this = <span class="self">self</span>.get_mut();
+<a href=#601 id=601 data-nosnippet>601</a>        <span class="kw">let </span>paths = <span class="kw">match </span>this.next_value.take() {
+<a href=#602 id=602 data-nosnippet>602</a>            <span class="prelude-val">Some</span>(paths) =&gt; paths,
+<a href=#603 id=603 data-nosnippet>603</a>            <span class="prelude-val">None </span>=&gt; {
+<a href=#604 id=604 data-nosnippet>604</a>                <span class="macro">std::task::ready!</span>(this.notified.as_mut().poll(cx));
+<a href=#605 id=605 data-nosnippet>605</a>                this.current()
+<a href=#606 id=606 data-nosnippet>606</a>            }
+<a href=#607 id=607 data-nosnippet>607</a>        };
+<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">if </span>paths.snapshot.closed {
+<a href=#609 id=609 data-nosnippet>609</a>            <span class="comment">// Keep it so later polls end too.
+<a href=#610 id=610 data-nosnippet>610</a>            </span>this.next_value = <span class="prelude-val">Some</span>(paths);
+<a href=#611 id=611 data-nosnippet>611</a>            Poll::Ready(<span class="prelude-val">None</span>)
+<a href=#612 id=612 data-nosnippet>612</a>        } <span class="kw">else </span>{
+<a href=#613 id=613 data-nosnippet>613</a>            Poll::Ready(<span class="prelude-val">Some</span>(paths))
+<a href=#614 id=614 data-nosnippet>614</a>        }
+<a href=#615 id=615 data-nosnippet>615</a>    }
+<a href=#616 id=616 data-nosnippet>616</a>}
+<a href=#617 id=617 data-nosnippet>617</a>
+<a href=#618 id=618 data-nosnippet>618</a><span class="doccomment">/// A `'static` stream of [`PathEvent`]s.
+<a href=#619 id=619 data-nosnippet>619</a>///
+<a href=#620 id=620 data-nosnippet>620</a>/// Returned by [`Connection::path_events`].
+<a href=#621 id=621 data-nosnippet>621</a>///
+<a href=#622 id=622 data-nosnippet>622</a>/// [`Connection::path_events`]: crate::endpoint::Connection::path_events
+<a href=#623 id=623 data-nosnippet>623</a></span><span class="attr">#[derive(Debug)]
+<a href=#624 id=624 data-nosnippet>624</a></span><span class="kw">pub struct </span>PathEventStream {
+<a href=#625 id=625 data-nosnippet>625</a>    inner: BroadcastStream&lt;PathEvent&gt;,
+<a href=#626 id=626 data-nosnippet>626</a>}
+<a href=#627 id=627 data-nosnippet>627</a>
+<a href=#628 id=628 data-nosnippet>628</a><span class="kw">impl </span>Stream <span class="kw">for </span>PathEventStream {
+<a href=#629 id=629 data-nosnippet>629</a>    <span class="kw">type </span>Item = PathEvent;
+<a href=#630 id=630 data-nosnippet>630</a>    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="self">self</span>.inner.poll_next(cx).map(|event| <span class="kw">match </span>event<span class="question-mark">? </span>{
+<a href=#632 id=632 data-nosnippet>632</a>            <span class="prelude-val">Ok</span>(event) =&gt; <span class="prelude-val">Some</span>(event),
+<a href=#633 id=633 data-nosnippet>633</a>            <span class="prelude-val">Err</span>(BroadcastStreamRecvError::Lagged(missed)) =&gt; <span class="prelude-val">Some</span>(PathEvent::Lagged { missed }),
+<a href=#634 id=634 data-nosnippet>634</a>        })
+<a href=#635 id=635 data-nosnippet>635</a>    }
+<a href=#636 id=636 data-nosnippet>636</a>}</code></pre></div></section></main></body></html>
