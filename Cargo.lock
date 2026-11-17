@@ -1351,7 +1351,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3090,7 +3090,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.20.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat%2Fwasm-native-udp#200b7edc822abf92af639d27c77b61f17091d3c6"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat%2Fwasm-native-udp#32a988e870e8a7c9e5b04a90869b484a35eeb948"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -4168,7 +4168,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4261,7 +4261,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4869,10 +4869,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5691,7 +5691,7 @@ dependencies = [
 [[package]]
 name = "webview-sockets"
 version = "0.1.0"
-source = "git+ssh://git@github.com/Frando/webview-sockets.git?branch=main#d0478547f93dab4818931f856b8b8c7be927444d"
+source = "git+https://github.com/Frando/webview-sockets?branch=main#d0478547f93dab4818931f856b8b8c7be927444d"
 dependencies = [
  "js-sys",
  "tracing",
@@ -5704,7 +5704,7 @@ dependencies = [
 [[package]]
 name = "webview-sockets-proto"
 version = "0.1.0"
-source = "git+ssh://git@github.com/Frando/webview-sockets.git?branch=main#d0478547f93dab4818931f856b8b8c7be927444d"
+source = "git+https://github.com/Frando/webview-sockets?branch=main#d0478547f93dab4818931f856b8b8c7be927444d"
 
 [[package]]
 name = "whoami"
@@ -5747,7 +5747,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
