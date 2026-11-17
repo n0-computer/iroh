@@ -50,11 +50,10 @@ Smartphone<!-- (please complete the following information) -->:
 **Additional Context / Screenshots / GIFs**
 <!-- Add any other context about the problem here. -->
 
-**lolwut**
-<!-- You made it to the bottom! Nice, now just prove you're human: -->
+**Collaboration**
+<!-- Thank you for caring about iroh! -->
+<!-- We find our AI policy very helpful, please take a look: -->
 
-- [ ] This issue was created by a human that thought critically about
-      the issue being reported and wrote this as concisely and clearly
-      as they could. Taking full responsibility for the issue being
-      accurate.
-- [ ] This issue isn't slop, and is backed up by evidence.
+- [ ] I have read and respected the [AI policy] (it's not long!).
+
+[AI policy]: https://github.com/n0-computer/iroh/blob/main/AI_POLICY.md
