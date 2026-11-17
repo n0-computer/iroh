@@ -477,6 +477,17 @@ where
                 self.metrics.send_packets_sent.inc();
                 Ok(())
             }
+            // If a packet exceeds the max packet size, that is an issue
+            // with the sender, not the receiver. Don't drop the connection
+            // to the receiver, just drop the packet.
+            Err(WriteFrameError::Stream {
+                source: RelaySendError::ExceedsMaxPacketSize { size, .. },
+                ..
+            }) => {
+                debug!(size, "dropping packet: exceeds max packet size");
+                self.metrics.send_packets_dropped.inc();
+                Ok(())
+            }
             Err(err) => {
                 self.metrics.send_packets_dropped.inc();
                 Err(err)
@@ -596,7 +607,11 @@ mod tests {
     use crate::{
         client::conn::Conn,
         http::ProtocolVersion,
-        protos::{common::FrameType, relay::Status, streams::WsBytesFramed},
+        protos::{
+            common::FrameType,
+            relay::{MAX_PACKET_SIZE, Status},
+            streams::WsBytesFramed,
+        },
         server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
     };
 
@@ -787,6 +802,41 @@ mod tests {
                 datagrams: data.to_vec().into(),
             }
         );
+
+        clients.shutdown().await;
+        Ok(())
+    }
+
+    /// A packet that cannot be encoded is dropped and the connection stays usable.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_unsendable_packet_is_dropped() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
+        let a_key = SecretKey::from_bytes(&rng.random()).public();
+        let b_key = SecretKey::from_bytes(&rng.random()).public();
+
+        let (builder_a, mut a_rw) = test_client_builder(a_key, ProtocolVersion::V2);
+
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+        clients.register(builder_a, metrics.clone());
+
+        // Does not fit into a frame once the frame header is added.
+        let too_large = vec![0u8; MAX_PACKET_SIZE];
+        clients.send_packet(a_key, Datagrams::from(&too_large[..]), b_key, &metrics)?;
+
+        // The next packet still arrives.
+        let data = b"still here";
+        clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a_rw).await?;
+        assert_eq!(
+            frame,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: b_key,
+                datagrams: data.to_vec().into(),
+            }
+        );
+        assert_eq!(metrics.send_packets_dropped.get(), 1);
 
         clients.shutdown().await;
         Ok(())
