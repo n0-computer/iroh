@@ -362,6 +362,9 @@ impl ActiveRelayActor {
     /// disconnected relay cannot have an endpoint route) keeps that lookup from stalling
     /// for however long is left of this relay's own unrelated backoff.
     ///
+    /// The inbox and the inactivity timeout are served as in [`Self::run_dialing`], whose
+    /// dial can fail before it gets to them.
+    ///
     /// Returns `false` if the actor should shut down instead of retrying.
     async fn sleep_backoff(&mut self, delay: Duration) -> bool {
         let sleep = time::sleep(delay);
@@ -384,7 +387,36 @@ impl ActiveRelayActor {
                         }
                     }
                 }
+                msg = self.inbox.recv() => {
+                    let Some(msg) = msg else {
+                        debug!("Inbox closed, shutdown.");
+                        return false;
+                    };
+                    self.handle_msg_while_disconnected(msg);
+                }
+                _ = &mut self.inactive_timeout, if !self.is_home_relay => {
+                    debug!(?RELAY_INACTIVE_CLEANUP_TIME, "Inactive, exiting.");
+                    return false;
+                }
                 _ = &mut sleep => return true,
+            }
+        }
+    }
+
+    /// Handles an inbox message while not connected to the relay server.
+    fn handle_msg_while_disconnected(&mut self, msg: ActiveRelayMessage) {
+        match msg {
+            ActiveRelayMessage::SetHomeRelay(is_home) => {
+                self.set_home_relay(is_home);
+            }
+            ActiveRelayMessage::CheckConnection { .. } => {}
+            #[cfg(test)]
+            ActiveRelayMessage::GetLocalAddr(sender) => {
+                sender.send(None).ok();
+            }
+            #[cfg(test)]
+            ActiveRelayMessage::PingServer(sender) => {
+                drop(sender);
             }
         }
     }
@@ -496,20 +528,7 @@ impl ActiveRelayActor {
                         debug!("Inbox closed, shutdown.");
                         break None;
                     };
-                    match msg {
-                        ActiveRelayMessage::SetHomeRelay(is_home) => {
-                            self.set_home_relay(is_home);
-                        }
-                        ActiveRelayMessage::CheckConnection { .. } => {}
-                        #[cfg(test)]
-                        ActiveRelayMessage::GetLocalAddr(sender) => {
-                            sender.send(None).ok();
-                        }
-                        #[cfg(test)]
-                        ActiveRelayMessage::PingServer(sender) => {
-                            drop(sender);
-                        }
-                    }
+                    self.handle_msg_while_disconnected(msg);
                 }
                 _ = send_datagram_flush.tick() => {
                     self.reset_inactive_timeout();
@@ -1526,8 +1545,8 @@ mod tests {
 
     use super::{
         ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        Config, RELAY_INACTIVE_CLEANUP_TIME, RelayActor, RelayConnectionOptions, RelayMap,
-        RelayRecvDatagram, RelaySendItem, UNDELIVERABLE_DATAGRAM_TIMEOUT,
+        Config, RELAY_INACTIVE_CLEANUP_TIME, RelayActor, RelayActorMessage, RelayConnectionOptions,
+        RelayMap, RelayRecvDatagram, RelaySendItem, UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
     use crate::{dns::DnsResolver, metrics::SocketMetrics, test_utils};
 
@@ -1694,6 +1713,33 @@ mod tests {
         .await
         .expect("overall timeout exceeded");
         Ok(())
+    }
+
+    /// Starts a [`RelayActor`] and returns its inbox, both datagram queues and its task.
+    fn setup_relay_actor() -> (
+        mpsc::Sender<RelayActorMessage>,
+        mpsc::Sender<RelaySendItem>,
+        mpsc::Receiver<RelayRecvDatagram>,
+        AbortOnDropHandle<()>,
+    ) {
+        let (datagram_recv_tx, datagram_recv_rx) = mpsc::channel(16);
+        let config = Config {
+            my_relay: Default::default(),
+            secret_key: SecretKey::from_bytes(&[1u8; 32]),
+            dns_resolver: DnsResolver::new(),
+            proxy_url: None,
+            ipv6_reported: Arc::new(AtomicBool::new(false)),
+            tls_config: CaTlsConfig::insecure_skip_verify()
+                .client_config(default_provider())
+                .expect("infallible"),
+            metrics: Default::default(),
+            relay_map: RelayMap::empty(),
+        };
+        let actor = RelayActor::new(config, datagram_recv_tx, CancellationToken::new());
+        let (msg_tx, msg_rx) = mpsc::channel(128);
+        let (datagram_send_tx, datagram_send_rx) = mpsc::channel(256);
+        let task = AbortOnDropHandle::new(tokio::spawn(actor.run(msg_rx, datagram_send_rx)));
+        (msg_tx, datagram_send_tx, datagram_recv_rx, task)
     }
 
     #[tokio::test]
@@ -1897,6 +1943,66 @@ mod tests {
         );
 
         cancel_token.cancel();
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn undialable_relay_does_not_stall_relay_actor_on_network_changes() -> Result {
+        let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
+        let (peer_endpoint, _echo_endpoint_task) = start_echo_endpoint(relay_url.clone());
+        let (msg_tx, datagram_send_tx, mut datagram_recv_rx, _task) = setup_relay_actor();
+        let undialable = RelaySendItem {
+            remote_endpoint: SecretKey::from_bytes(&[2u8; 32]).public(),
+            url: "x://h/".parse().unwrap(),
+            datagrams: Datagrams::from(b"lost"),
+        };
+        datagram_send_tx
+            .send(undialable)
+            .await
+            .std_context("relay actor alive")?;
+        let hello = RelaySendItem {
+            remote_endpoint: peer_endpoint,
+            url: relay_url,
+            datagrams: Datagrams::from(b"hello"),
+        };
+        send_recv_echo(hello.clone(), &datagram_send_tx, &mut datagram_recv_rx).await?;
+
+        for _ in 0..100 {
+            assert!(
+                msg_tx
+                    .send(RelayActorMessage::CheckConnectionAfterNetworkChange)
+                    .await
+                    .is_ok(),
+                "relay actor alive"
+            );
+        }
+
+        send_recv_echo(hello, &datagram_send_tx, &mut datagram_recv_rx).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[traced_test]
+    async fn undialable_relay_actor_exits_when_inactive() -> Result {
+        let (datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(16);
+        let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
+        let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
+        let (_inbox_tx, inbox_rx) = mpsc::channel(16);
+        let task = start_active_relay_actor(
+            SecretKey::from_bytes(&[1u8; 32]),
+            CancellationToken::new(),
+            "x://h/".parse().unwrap(),
+            prio_inbox_rx,
+            inbox_rx,
+            send_datagram_rx,
+            datagram_recv_tx,
+            Default::default(),
+            info_span!("actor-under-test"),
+        );
+        tokio::time::timeout(RELAY_INACTIVE_CLEANUP_TIME * 2, task)
+            .await
+            .std_context("actor task still running")?
+            .std_context("actor task failed")?;
         Ok(())
     }
 
