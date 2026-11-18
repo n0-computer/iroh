@@ -11,9 +11,11 @@ use std::{
     sync::Arc,
 };
 
+use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
 use rand::Rng;
 use rustc_hash::FxHashMap;
+use tokio_util::sync::CancellationToken;
 use tracing::trace;
 
 /// The Prefix/L of all Unique Local Addresses.
@@ -121,13 +123,70 @@ impl From<SocketAddr> for MultipathMappedAddr {
 /// - If this the first connection to the remote endpoint we don't know which path will work
 ///   and send to all of them.
 ///
-/// - If there already is an active connection to this endpoint we now which path to use.
+/// - If there already is an active connection to this endpoint we try its selected path
+///   first, then fall back to the other paths if the new handshake has not completed.
 ///
 /// It is but a newtype around an IPv6 Unique Local Addr.  And in our QUIC-facing socket
 /// APIs like [`noq::AsyncUdpSocket`] it comes in as the inner [`Ipv6Addr`], in those
 /// interfaces we have to be careful to do the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct EndpointIdMappedAddr(Ipv6Addr);
+
+/// Maps each outgoing handshake to its peer and completion notification.
+///
+/// Separate mapped addresses let the socket distinguish concurrent handshakes to the same
+/// peer before Noq exposes a connection handle. Entries live only as long as the attempt.
+#[derive(Debug, Clone, Default)]
+pub(super) struct ConnectingAddrMap {
+    inner: Arc<std::sync::Mutex<FxHashMap<EndpointIdMappedAddr, (EndpointId, CancellationToken)>>>,
+}
+
+impl ConnectingAddrMap {
+    pub(super) fn insert(&self, endpoint: EndpointId) -> ConnectionAttempt {
+        let mut inner = self.inner.lock().expect("poisoned");
+        let addr = loop {
+            let candidate = EndpointIdMappedAddr::generate();
+            if !inner.contains_key(&candidate) {
+                break candidate;
+            }
+        };
+        let finished = CancellationToken::new();
+        inner.insert(addr, (endpoint, finished.clone()));
+        ConnectionAttempt {
+            addr,
+            finished,
+            map: self.clone(),
+        }
+    }
+
+    pub(super) fn lookup(
+        &self,
+        addr: &EndpointIdMappedAddr,
+    ) -> Option<(EndpointId, CancellationToken)> {
+        self.inner.lock().expect("poisoned").get(addr).cloned()
+    }
+}
+
+/// Owns an outgoing handshake's mapped address until registration, failure or cancellation.
+#[derive(Debug)]
+pub(crate) struct ConnectionAttempt {
+    pub(crate) addr: EndpointIdMappedAddr,
+    finished: CancellationToken,
+    map: ConnectingAddrMap,
+}
+
+impl ConnectionAttempt {
+    pub(crate) fn private_socket_addr(&self) -> SocketAddr {
+        self.addr.private_socket_addr()
+    }
+}
+
+impl Drop for ConnectionAttempt {
+    fn drop(&mut self) {
+        self.finished.cancel();
+        self.map.inner.lock().expect("poisoned").remove(&self.addr);
+    }
+}
 
 impl MappedAddr for EndpointIdMappedAddr {
     /// Generates a globally unique fake UDP address.
