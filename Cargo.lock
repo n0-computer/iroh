@@ -1774,6 +1774,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "hickory-net"
 version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2896,21 +2902,19 @@ dependencies = [
 
 [[package]]
 name = "n0-mainline"
-version = "0.7.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b739fb0145326fa2287f704a5a3bceb5d21c5b6f1b09436403b504f85c2e6ded"
+checksum = "9624231d16070e2c4de0bbd37246eb8052ffdb832d6a3fa501abdbf4cb9549c9"
 dependencies = [
  "crc",
  "dyn-clone",
  "ed25519-dalek",
  "futures-core",
- "lru 0.18.5",
+ "hex",
+ "lru 0.19.0",
  "n0-error",
  "noq-udp",
  "rand 0.10.3",
- "serde",
- "serde_bencode",
- "serde_bytes",
  "sha1_smol",
  "tokio",
  "tracing",
@@ -4389,16 +4393,6 @@ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
-]
-
-[[package]]
-name = "serde_bencode"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a70dfc7b7438b99896e7f8992363ab8e2c4ba26aa5ec675d32d1c3c2c33d413e"
-dependencies = [
- "serde",
- "serde_bytes",
 ]
 
 [[package]]
