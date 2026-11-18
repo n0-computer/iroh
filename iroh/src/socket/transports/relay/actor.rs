@@ -50,7 +50,7 @@ use iroh_relay::{
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     FuturesUnorderedBounded, MaybeFuture, SinkExt, StreamExt,
-    task::{JoinError, JoinSet},
+    task::{AbortHandle, JoinError, JoinSet},
     time::{self, Duration, Instant, MissedTickBehavior},
 };
 use n0_watcher::Watchable;
@@ -85,6 +85,11 @@ const SEND_DATAGRAM_BATCH_SIZE: usize = 20;
 /// This includes DNS, dialing the server, upgrading the connection, and completing the
 /// handshake.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A peer may never acknowledge a WebSocket close (e.g. a blackholed TCP flow).
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
+/// Bounds internal control requests, including enqueueing and receiving replies.
+const ACTOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Time after which the [`ActiveRelayActor`] will drop undeliverable datagrams.
 ///
@@ -362,6 +367,10 @@ impl ActiveRelayActor {
     /// disconnected relay cannot have an endpoint route) keeps that lookup from stalling
     /// for however long is left of this relay's own unrelated backoff.
     ///
+    /// Control messages on the normal inbox are also drained (`SetHomeRelay` is applied,
+    /// the rest only matter for a connected relay), so that the [`RelayActor`]'s bounded
+    /// control sends do not mistake an ordinary network outage for a stuck actor.
+    ///
     /// Returns `false` if the actor should shut down instead of retrying.
     async fn sleep_backoff(&mut self, delay: Duration) -> bool {
         let sleep = time::sleep(delay);
@@ -385,6 +394,20 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = &mut sleep => return true,
+                msg = self.inbox.recv() => {
+                    match msg {
+                        Some(ActiveRelayMessage::SetHomeRelay(is_home)) => {
+                            self.set_home_relay(is_home);
+                        }
+                        // Nothing to check while disconnected; test-only requests are
+                        // answered by dropping their reply sender.
+                        Some(_) => {}
+                        None => {
+                            warn!("Inbox closed, shutdown.");
+                            return false;
+                        }
+                    }
+                }
             }
         }
     }
@@ -703,10 +726,8 @@ impl ActiveRelayActor {
             }
         };
 
-        if res.is_ok()
-            && let Err(err) = client_sink.close().await
-        {
-            debug!("Failed to close client sink gracefully: {err:#}");
+        if res.is_ok() {
+            close_relay_sink(&mut client_sink, &self.stop_token).await;
         }
 
         res.map_err(|err| state.map_err(err))
@@ -853,6 +874,23 @@ impl ActiveRelayActor {
             }
         };
         res.map_err(|err| state.map_err(err))
+    }
+}
+
+/// Dropping both stream halves after this returns releases the transport even
+/// when the relay never completes its close handshake.
+async fn close_relay_sink<S>(sink: &mut S, stop: &CancellationToken)
+where
+    S: n0_future::Sink<ClientToRelayMsg> + Unpin,
+    S::Error: std::fmt::Debug,
+{
+    match stop
+        .run_until_cancelled(time::timeout(CLOSE_TIMEOUT, sink.close()))
+        .await
+    {
+        Some(Ok(Ok(()))) | None => {}
+        Some(Ok(Err(err))) => debug!(?err, "Failed to close client sink gracefully"),
+        Some(Err(_)) => warn!("Relay close timed out; dropping transport"),
     }
 }
 
@@ -1258,15 +1296,18 @@ impl RelayActor {
 
     async fn set_home_relay(&mut self, home_url: RelayUrl) {
         let home_url_ref = &home_url;
-        n0_future::join_all(self.active_relays.iter().map(|(url, handle)| async move {
-            let is_preferred = url == home_url_ref;
-            handle
-                .inbox_addr
-                .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
-                .await
-                .ok()
-        }))
-        .await;
+        let failed =
+            n0_future::join_all(self.active_relays.iter().map(|(url, handle)| async move {
+                let is_preferred = url == home_url_ref;
+                (!handle
+                    .send_control(ActiveRelayMessage::SetHomeRelay(is_preferred))
+                    .await)
+                    .then(|| url.clone())
+            }))
+            .await;
+        for url in failed.into_iter().flatten() {
+            self.retire_relay(&url);
+        }
         // Ensure we have an ActiveRelayActor for the current home relay.
         self.active_relay_handle(home_url);
     }
@@ -1286,33 +1327,32 @@ impl RelayActor {
         }
 
         let mut found_relay: Option<RelayUrl> = None;
+        let mut failed = Vec::new();
         // If we don't have an open connection to the remote endpoint's home relay, see if
         // we have an open connection to a relay endpoint where we'd heard from that peer
         // already.  E.g. maybe they dialed our home relay recently.
         {
             // Futures which return Some(RelayUrl) if the relay knows about the remote endpoint.
             let check_futs = self.active_relays.iter().map(|(url, handle)| async move {
-                let (tx, rx) = oneshot::channel();
-                handle
-                    .prio_inbox_addr
-                    .send(ActiveRelayPrioMessage::HasEndpointRoute(
-                        *remote_endpoint,
-                        tx,
-                    ))
-                    .await
-                    .ok();
-                match rx.await {
-                    Ok(true) => Some(url.clone()),
-                    _ => None,
-                }
+                (
+                    url.clone(),
+                    handle.has_endpoint_route(*remote_endpoint).await,
+                )
             });
             let mut futures = FuturesUnorderedBounded::from_iter(check_futs);
-            while let Some(maybe_url) = futures.next().await {
-                if maybe_url.is_some() {
-                    found_relay = maybe_url;
-                    break;
+            while let Some((url, result)) = futures.next().await {
+                match result {
+                    Ok(true) => {
+                        found_relay = Some(url);
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(()) => failed.push(url),
                 }
             }
+        }
+        for url in failed {
+            self.retire_relay(&url);
         }
         let url = found_relay.unwrap_or(url.clone());
         self.active_relay_handle(url)
@@ -1320,6 +1360,15 @@ impl RelayActor {
 
     /// Returns the handle of the [`ActiveRelayActor`].
     fn active_relay_handle(&mut self, url: RelayUrl) -> ActiveRelayHandle {
+        // Never replace a task before its old state (including its sockets) has
+        // been dropped. join_next/reap_active_relays handles aborted tasks.
+        if self
+            .active_relays
+            .get(&url)
+            .is_some_and(|h| h.task.is_finished())
+        {
+            self.active_relays.remove(&url);
+        }
         match self.active_relays.get(&url) {
             Some(e) => e.clone(),
             None => {
@@ -1373,13 +1422,14 @@ impl RelayActor {
             my_relay: self.config.my_relay.clone(),
         };
         let actor = ActiveRelayActor::new(opts);
-        self.active_relay_tasks.spawn(
+        let task = self.active_relay_tasks.spawn(
             async move {
                 actor.run().await;
             }
             .instrument(span),
         );
         let handle = ActiveRelayHandle {
+            task,
             prio_inbox_addr: prio_inbox_tx,
             inbox_addr: inbox_tx,
             datagrams_send_queue: send_datagram_tx,
@@ -1407,7 +1457,13 @@ impl RelayActor {
     /// local IPs.
     async fn send_check_connection(&self) {
         #[cfg(not(wasm_browser))]
-        let ifs = interfaces::State::new().await;
+        let ifs = match time::timeout(ACTOR_REQUEST_TIMEOUT, interfaces::State::new()).await {
+            Ok(ifs) => ifs,
+            Err(_) => {
+                warn!("Interface snapshot timed out; skipping relay connection check");
+                return;
+            }
+        };
         #[cfg(not(wasm_browser))]
         let local_ips: Vec<_> = ifs
             .interfaces
@@ -1419,23 +1475,33 @@ impl RelayActor {
         // in the ActiveRelayActor, though.
         #[cfg(wasm_browser)]
         let local_ips = Vec::new();
-        let send_futs = self.active_relays.values().map(|handle| {
+        let send_futs = self.active_relays.iter().map(|(url, handle)| {
             let local_ips = local_ips.clone();
             async move {
-                handle
-                    .inbox_addr
-                    .send(ActiveRelayMessage::CheckConnection { local_ips })
-                    .await
-                    .ok();
+                (!handle
+                    .send_control(ActiveRelayMessage::CheckConnection { local_ips })
+                    .await)
+                    .then(|| url.clone())
             }
         });
-        n0_future::join_all(send_futs).await;
+        for url in n0_future::join_all(send_futs).await.into_iter().flatten() {
+            self.retire_relay(&url);
+        }
+    }
+
+    /// Abort an unresponsive task. Keep its handle until the task has actually
+    /// finished so a replacement cannot race with the old actor's state writes.
+    fn retire_relay(&self, url: &RelayUrl) {
+        if let Some(handle) = self.active_relays.get(url) {
+            warn!(%url, "Relay actor control request failed; retiring actor");
+            handle.task.abort();
+        }
     }
 
     /// Cleans up [`ActiveRelayActor`]s which have stopped running.
     fn reap_active_relays(&mut self) {
         self.active_relays
-            .retain(|_url, handle| !handle.inbox_addr.is_closed());
+            .retain(|_url, handle| !handle.task.is_finished());
 
         // Make sure home relay exists
         if let Some(status) = self.config.my_relay.get() {
@@ -1448,9 +1514,17 @@ impl RelayActor {
     async fn close_all_active_relays(&mut self) {
         self.cancel_token.cancel();
         let mut tasks = std::mem::take(&mut self.active_relay_tasks);
-        // Drain instead of `join_all`, which panics on any `JoinError`.
-        while let Some(res) = tasks.join_next().await {
-            log_active_relay_task_result(res);
+        // Drain instead of `join_all`, which panics on any `JoinError`. Bounded, because an
+        // actor stuck in synchronous code or an unbounded wait must not block shutdown.
+        let drained = time::timeout(ACTOR_REQUEST_TIMEOUT, async {
+            while let Some(res) = tasks.join_next().await {
+                log_active_relay_task_result(res);
+            }
+        })
+        .await;
+        if drained.is_err() {
+            warn!("Relay actor shutdown timed out; aborting remaining tasks");
+            tasks.shutdown().await;
         }
 
         self.log_active_relay();
@@ -1482,7 +1556,8 @@ fn log_active_relay_task_result(res: Result<(), JoinError>) {
     match res {
         Ok(()) => (),
         Err(err) if err.is_panic() => error!("ActiveRelayActor task panicked: {err:#?}"),
-        Err(err) if err.is_cancelled() => error!("ActiveRelayActor cancelled: {err:#?}"),
+        // Expected: shutdown, or an unresponsive actor retired by `retire_relay`.
+        Err(err) if err.is_cancelled() => debug!("ActiveRelayActor cancelled: {err:#?}"),
         Err(err) => error!("ActiveRelayActor failed: {err:#?}"),
     }
 }
@@ -1490,9 +1565,32 @@ fn log_active_relay_task_result(res: Result<(), JoinError>) {
 /// Handle to one [`ActiveRelayActor`].
 #[derive(Debug, Clone)]
 struct ActiveRelayHandle {
+    task: AbortHandle,
     prio_inbox_addr: mpsc::Sender<ActiveRelayPrioMessage>,
     inbox_addr: mpsc::Sender<ActiveRelayMessage>,
     datagrams_send_queue: mpsc::Sender<RelaySendItem>,
+}
+
+impl ActiveRelayHandle {
+    async fn send_control(&self, msg: ActiveRelayMessage) -> bool {
+        matches!(
+            time::timeout(ACTOR_REQUEST_TIMEOUT, self.inbox_addr.send(msg)).await,
+            Ok(Ok(()))
+        )
+    }
+
+    async fn has_endpoint_route(&self, peer: EndpointId) -> Result<bool, ()> {
+        time::timeout(ACTOR_REQUEST_TIMEOUT, async {
+            let (tx, rx) = oneshot::channel();
+            self.prio_inbox_addr
+                .send(ActiveRelayPrioMessage::HasEndpointRoute(peer, tx))
+                .await
+                .map_err(|_| ())?;
+            rx.await.map_err(|_| ())
+        })
+        .await
+        .map_err(|_| ())?
+    }
 }
 
 /// A single datagram received from a relay server.
@@ -1507,6 +1605,7 @@ pub(crate) struct RelayRecvDatagram {
 
 #[cfg(test)]
 mod tests {
+    include!("recovery_tests.rs");
     use std::{
         sync::{Arc, atomic::AtomicBool},
         time::Duration,
