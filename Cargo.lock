@@ -245,18 +245,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "attohttpc"
-version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16e2cdb6d5ed835199484bb92bb8b3edd526effe995c61732580439c1a67e2e9"
-dependencies = [
- "base64 0.22.1",
- "http",
- "log",
- "url",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2158,11 +2146,10 @@ dependencies = [
 
 [[package]]
 name = "igd-next"
-version = "0.17.1"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de7238d487a9aff61f81b5ab41c0a841532a115a398b5fa92a2fadd0885e2581"
+checksum = "c71312255fdc5364bff7eec0adf68146bc4e72aba85075261af40d234c11be99"
 dependencies = [
- "attohttpc",
  "bytes",
  "futures",
  "http",
@@ -2171,8 +2158,10 @@ dependencies = [
  "hyper-util",
  "log",
  "rand 0.10.3",
+ "thiserror 2.0.20",
  "tokio",
  "url",
+ "xml-rs",
  "xmltree",
 ]
 
@@ -2283,7 +2272,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
- "simple-dns",
+ "simple-dns 0.12.0",
  "smallvec",
  "strum",
  "testdir",
@@ -2356,7 +2345,7 @@ dependencies = [
  "portable-atomic",
  "rand 0.10.3",
  "rustls",
- "simple-dns",
+ "simple-dns 0.12.0",
  "strum",
  "tokio",
  "tracing",
@@ -2405,7 +2394,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "simple-dns",
+ "simple-dns 0.12.0",
  "socket2",
  "strum",
  "tempfile",
@@ -2426,9 +2415,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ede55536349842337f7cdc63012ec33dc637945f3259c98a0763aac364cdf09"
+checksum = "e136dab0f56d67ae1e8e4de75f84e271b6b2ccf0cdbed1be79936783247c1590"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2834,9 +2823,9 @@ dependencies = [
 
 [[package]]
 name = "n0-dns-resolver"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "535c99c9a786bee714155d2ee4fc2477405c2c43536e1bc6a51de09a0d1448f7"
+checksum = "0381996935dc55768ae8b13e7db69d3a90f13afb51dde80f870484027968bcd2"
 dependencies = [
  "derive_more",
  "ipconfig",
@@ -2849,7 +2838,7 @@ dependencies = [
  "reqwest",
  "rustc-hash",
  "rustls",
- "simple-dns",
+ "simple-dns 0.13.1",
  "system-configuration 0.8.0",
  "tokio",
  "tokio-rustls",
@@ -2956,13 +2945,14 @@ dependencies = [
 
 [[package]]
 name = "n0-watcher"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbc618745ad0b7414b149d0517ad8b5573b2fb4d4e2717add3d2446ce1fdd826"
+checksum = "64bf1ecb076a87e0e3f5edcf726e7d29e788c273bb0161ba30666b53f085906c"
 dependencies = [
  "derive_more",
  "n0-error",
  "n0-future",
+ "slotmap",
 ]
 
 [[package]]
@@ -2973,9 +2963,9 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "netdev"
-version = "0.46.3"
+version = "0.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3c52c2584961c68f5a6e3356797344061f818c93b8acc9cd6d7e284795e563e"
+checksum = "98a4d13f8061600697d721c5fd45262aba533a7d4a7670e7c64fd02d68e4a9fb"
 dependencies = [
  "block2",
  "dispatch2",
@@ -3093,9 +3083,9 @@ dependencies = [
 
 [[package]]
 name = "netwatch"
-version = "0.20.0"
+version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c3a0623d1a02e08a6f86fb9481811578271d61f7395f7f0701775be64788b2c"
+checksum = "2acf7a1ca9205d7c1fc9a1595193a8cbaa7537b4a07dca93c6ae3de7c8d0e597"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3119,7 +3109,6 @@ dependencies = [
  "pin-project-lite",
  "serde",
  "socket2",
- "time",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3676,11 +3665,10 @@ dependencies = [
 
 [[package]]
 name = "portmapper"
-version = "0.20.0"
+version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bad81f18ea1635a873d8cbb62904d7752f0b82001dae5cc3a774c82b0b208cf7"
+checksum = "d36ce759df600731dd2511cd2d640bd551086b2f7b68bceb9bbcfd8c7ff86053"
 dependencies = [
- "base64 0.23.1",
  "bytes",
  "derive_more",
  "hyper-util",
@@ -3695,10 +3683,8 @@ dependencies = [
  "serde",
  "smallvec",
  "socket2",
- "time",
  "tokio",
  "tokio-util",
- "tower-layer",
  "tracing",
  "url",
 ]
@@ -4611,6 +4597,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple-dns"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8aea2b78df6bbe38fb98d2c8140ada65fb63a314246a0c38626140dd21c69ff7"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
 name = "siphasher"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4621,6 +4616,15 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "slotmap"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
+dependencies = [
+ "version_check",
+]
 
 [[package]]
 name = "smallvec"
@@ -4863,7 +4867,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
