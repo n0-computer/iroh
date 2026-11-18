@@ -56,7 +56,7 @@ use tracing::{Instrument, debug, error, info, info_span, instrument};
 
 use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
-    defaults::DEFAULT_KEY_CACHE_CAPACITY,
+    defaults::{DEFAULT_KEY_CACHE_CAPACITY, DEFAULT_LISTEN_BACKLOG},
     http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_RELATIVE_PATH},
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
     tls::CaTlsConfig,
@@ -143,6 +143,8 @@ pub struct RelayConfig {
     pub limits: Limits,
     /// Key cache capacity.
     pub key_cache_capacity: Option<usize>,
+    /// Listen queue length (defaults to 1024, capped by `net.core.somaxconn` on Linux).
+    pub listen_backlog: Option<u32>,
     /// Access control for incoming connections.
     pub access: Arc<dyn DynAccessControl>,
 }
@@ -159,6 +161,7 @@ impl RelayConfig {
             tls: None,
             limits: Limits::default(),
             key_cache_capacity: None,
+            listen_backlog: None,
             access: Arc::new(AllowAll),
         }
     }
@@ -733,6 +736,11 @@ impl Server {
                     .metrics(metrics.server.clone())
                     .headers(headers)
                     .key_cache_capacity(key_cache_capacity)
+                    .listen_backlog(
+                        relay_config
+                            .listen_backlog
+                            .unwrap_or(DEFAULT_LISTEN_BACKLOG),
+                    )
                     .access(relay_config.access)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
@@ -828,7 +836,7 @@ impl Server {
                         (None, None)
                     }
                 };
-                let relay_server = builder.spawn().await?;
+                let relay_server = builder.spawn()?;
                 (Some(relay_server), http_addr, tls_config)
             }
             None => (None, None, None),
