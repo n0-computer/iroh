@@ -112,7 +112,9 @@ pub enum SendError {
         /// The size of the packet that was too large
         size: usize,
     },
-    /// Attempted to send an empty packet
+    /// Attempt to send an empty packet
+    ///
+    /// Deprecated: no longer returned. Will be marked `#[deprecated]` in the next minor release.
     #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
@@ -133,9 +135,6 @@ where
             size <= MAX_PACKET_SIZE,
             SendError::ExceedsMaxPacketSize { size }
         );
-        if let RelayToClientMsg::Datagrams { datagrams, .. } = &item {
-            ensure!(!datagrams.contents.is_empty(), SendError::EmptyPacket);
-        }
 
         Pin::new(&mut self.inner)
             .start_send(item.to_bytes().freeze())
