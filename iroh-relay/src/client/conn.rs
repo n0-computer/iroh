@@ -40,6 +40,7 @@ pub enum SendError {
     StreamError { source: AnyError },
     #[error("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}")]
     ExceedsMaxPacketSize { size: usize },
+    /// Deprecated: no longer returned. Will be marked `#[deprecated]` in the next minor release.
     #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
@@ -150,9 +151,6 @@ impl Sink<ClientToRelayMsg> for Conn {
             size <= MAX_PACKET_SIZE,
             SendError::ExceedsMaxPacketSize { size }
         );
-        if let ClientToRelayMsg::Datagrams { datagrams, .. } = &frame {
-            ensure!(!datagrams.contents.is_empty(), SendError::EmptyPacket);
-        }
 
         Pin::new(&mut self.conn)
             .start_send(frame.to_bytes().freeze())
