@@ -504,6 +504,13 @@ impl<'conn> Path<'conn> {
 ///
 /// After a wait method returns, the next poll yields its snapshot again.
 ///
+/// # Cancel safety
+///
+/// The wait methods are cancel safe. If one is used in `tokio::select!` and
+/// another branch completes first, no snapshot is lost: the next poll of the
+/// stream yields the last snapshot the method checked, and calling it again
+/// checks the current paths before waiting.
+///
 /// [`Connection::paths_stream`]: crate::endpoint::Connection::paths_stream
 #[derive(Debug)]
 pub struct PathListStream<'conn> {
@@ -521,7 +528,9 @@ impl<'conn> PathListStream<'conn> {
     ///
     /// Checks the current paths first. Returns `None` if the stream ends first.
     ///
-    /// This method is cancellation safe.
+    /// # Cancel safety
+    ///
+    /// This method is cancel safe. See [`PathListStream`](PathListStream#cancel-safety).
     pub async fn wait_any(
         &mut self,
         mut predicate: impl FnMut(&Path<'_>) -> bool,
@@ -541,7 +550,9 @@ impl<'conn> PathListStream<'conn> {
     ///
     /// Checks the current paths first. Returns `None` if the stream ends first.
     ///
-    /// This method is cancellation safe.
+    /// # Cancel safety
+    ///
+    /// This method is cancel safe. See [`PathListStream`](PathListStream#cancel-safety).
     pub async fn wait_none(
         &mut self,
         mut predicate: impl FnMut(&Path<'_>) -> bool,
@@ -556,7 +567,11 @@ impl<'conn> PathListStream<'conn> {
     ///
     /// Checks the current paths first. Returns `None` if the stream ends first.
     ///
-    /// This method is cancellation safe.
+    /// If the path is already closed, it immediately returns the current snapshot.
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is cancel safe. See [`PathListStream`](PathListStream#cancel-safety).
     pub async fn wait_closed(&mut self, id: PathId) -> Option<&PathList<'conn>> {
         self.wait_none(|path| path.id() == id).await
     }
