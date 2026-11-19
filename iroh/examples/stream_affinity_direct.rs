@@ -27,7 +27,7 @@
 use bytes::Bytes;
 use iroh::{
     Endpoint,
-    endpoint::{Connection, ConnectionError, PathList, presets},
+    endpoint::{Connection, ConnectionError, presets},
 };
 use n0_error::{Result, StdResultExt, anyerr, ensure_any};
 use n0_future::{StreamExt, task::AbortOnDropHandle};
@@ -85,22 +85,15 @@ async fn run_bob(conn: Connection) -> Result<()> {
 }
 
 async fn run_alice(conn: Connection) -> Result<()> {
+    // Print all path changes.
+    let _printer = AbortOnDropHandle::new(tokio::spawn(print_open_paths(conn.clone())));
     // We need to watch the paths since we only want to transmit on a direct path.
     let mut paths_watcher = conn.paths_stream();
-
     // Wait for a direct path to appear. If we open the stream immediately and than set it's
     // affinity to blocked before we have a direct path we will already be consuming
     // connection-wide send window capacity for a stream that can not send anyway. So we
     // prefer to delay opening the stream.
-    let mut direct_path = loop {
-        let Some(paths) = paths_watcher.next().await else {
-            return Err(anyerr!("path watcher stopped"));
-        };
-        print_open_paths(&paths);
-        if let Some(direct) = paths.iter().find(|p| p.is_ip()) {
-            break direct.id();
-        }
-    };
+    let direct_path = paths_watcher.wait_any(|p| p.is_ip()).await.anyerr()?.id();
 
     // Create a SendStream and make it stick to a direct path.
     println!("stream sticks to direct path {direct_path}");
@@ -115,29 +108,28 @@ async fn run_alice(conn: Connection) -> Result<()> {
     // protocol agreement. So we can not stop this task before we get this signal as before
     // that we might still need to retransmit data even though we already called
     // SendStream::finish.
-    let _watcher = AbortOnDropHandle::new(tokio::spawn({
+    let _watcher: AbortOnDropHandle<Result<()>> = AbortOnDropHandle::new(tokio::spawn({
         let conn = conn.clone();
         let send_stream = send_stream.clone();
         async move {
+            let mut direct_path = direct_path;
             let mut paths_watcher = conn.paths_stream();
-            while let Some(paths) = paths_watcher.next().await {
-                print_open_paths(&paths);
-                // Only change the sticky path if the currently used path is no longer
-                // available.
-                if paths.iter().find(|p| p.id() == direct_path).is_none() {
-                    if let Some(path) = paths.iter().find(|p| p.is_ip()) {
-                        println!("stream sticks to direct path {}", path.id());
-                        send_stream
-                            .set_affinity(StreamAffinity::Sticky(path.id()))
-                            .anyerr()?;
-                        direct_path = path.id();
-                    } else {
-                        println!("no direct path left, blocking the stream");
-                        send_stream.set_affinity(StreamAffinity::Block).anyerr()?;
-                    }
-                }
+            while let Some(paths) = paths_watcher.wait_closed(direct_path).await {
+                direct_path = if let Some(path) = paths.iter().find(|p| p.is_ip()) {
+                    // A new direct path is already available. Use it.
+                    path.id()
+                } else {
+                    println!("no direct path left, blocking the stream");
+                    // No direct path is available. Wait for one and block the stream until then.
+                    send_stream.set_affinity(StreamAffinity::Block).anyerr()?;
+                    paths_watcher.wait_any(|p| p.is_ip()).await.anyerr()?.id()
+                };
+                println!("stream sticks to direct path {direct_path}");
+                send_stream
+                    .set_affinity(StreamAffinity::Sticky(direct_path))
+                    .anyerr()?;
             }
-            Err::<(), _>(anyerr!("path watcher stopped"))
+            Ok(())
         }
     }));
 
@@ -157,15 +149,18 @@ async fn run_alice(conn: Connection) -> Result<()> {
     }
 }
 
-fn print_open_paths(paths: &PathList<'_>) {
-    println!("open paths:");
-    for path in paths.iter() {
-        let transport = if path.is_relay() { "relay" } else { "ip" };
-        let selected = if path.is_selected() {
-            " (selected)"
-        } else {
-            ""
-        };
-        println!("  path {}: {transport}{selected}", path.id());
+async fn print_open_paths(conn: Connection) {
+    let mut watcher = conn.paths_stream();
+    while let Some(paths) = watcher.next().await {
+        println!("open paths:");
+        for path in paths.iter() {
+            let transport = if path.is_relay() { "relay" } else { "ip" };
+            let selected = if path.is_selected() {
+                " (selected)"
+            } else {
+                ""
+            };
+            println!("  path {}: {transport}{selected}", path.id());
+        }
     }
 }
