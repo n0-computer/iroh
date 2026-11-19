@@ -47,8 +47,8 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
-noq = { version = "1.4.0", default-features = false, features = ["rustls"] }
-noq-proto = { version = "1.4.0", default-features = false }
+noq = { version = "1.5.0", default-features = false, features = ["rustls"] }
+noq-proto = { version = "1.5.0", default-features = false }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
 rustls = { version = "0.23.46", default-features = false }
@@ -77,7 +77,7 @@ reloadable-state = { version = "0.1", optional = true }
 rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
 rustls-cert-file-reader = { version = "0.4.2", optional = true }
 time = { version = "0.3.37", optional = true }
-tokio-rustls-acme = { version = "0.9", optional = true }
+tokio-rustls-acme = { version = "0.10", optional = true }
 tokio-websockets = { version = "0.13", features = ["rustls-bring-your-own-connector", "getrandom", "rand", "server", "sha1_smol"], optional = true } # server-side websocket implementation
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
 sha1 = { version = "0.11.0", optional = true }
