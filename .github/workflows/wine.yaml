@@ -51,7 +51,7 @@ jobs:
         run: sudo apt-get install -y mingw-w64
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: nextest
 
