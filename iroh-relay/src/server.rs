@@ -1220,7 +1220,7 @@ mod tests {
         client::{ClientBuilder, ConnectError},
         protos::{
             handshake,
-            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+            relay::{ClientToRelayMsg, Datagrams, MAX_PACKET_SIZE, RelayToClientMsg},
         },
         test_utils::static_resolver,
         tls::{self, CaTlsConfig, default_provider},
@@ -1438,6 +1438,49 @@ mod tests {
 
         assert_eq!(b_key, remote_endpoint_id);
         assert_eq!(msg, datagrams);
+
+        Ok(())
+    }
+
+    /// The largest payload that fits into a frame is still delivered.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_relay_largest_payload() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
+        let server = spawn_local_relay().await?;
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse()?;
+
+        let client_config = CaTlsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
+        let a_key = a_secret_key.public();
+        let resolver = dns_resolver();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .tls_client_config(client_config.clone())
+            .connect()
+            .await?;
+
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
+        let b_key = b_secret_key.public();
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .tls_client_config(client_config)
+            .connect()
+            .await?;
+
+        // Frame type (1), endpoint id (32) and ECN (1) take up 34 bytes of the frame.
+        let msg = Datagrams::from(vec![7u8; MAX_PACKET_SIZE - 34]);
+        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
+        assert_eq!(
+            res,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: a_key,
+                datagrams: msg,
+            }
+        );
 
         Ok(())
     }

@@ -13,7 +13,6 @@ allow = [
     "ISC",
     "MIT",
     "Zlib",
-    "MPL-2.0",                        # https://fossa.com/blog/open-source-software-licenses-101-mozilla-public-license-2-0/
     "Unicode-3.0",
     "Unlicense",                      # https://unlicense.org/
 ]
@@ -22,13 +21,10 @@ allow = [
 [advisories]
 yanked = "deny"
 ignore = [
-  "RUSTSEC-2024-0436", # paste -> netlink-packet-core
   "RUSTSEC-2023-0089", # unmaintained: postcard -> heapless -> atomic-polyfill
   "RUSTSEC-2026-0542", # unmaintained: humantime, via iroh-dns-server, humantime-serde, n0-qlog
   "RUSTSEC-2026-0543", # unmaintained: chrono, via netwatch, wmi, tokio-rustls-acme, patchbay
 ]
 
 [sources]
-allow-git = [
-  "https://github.com/n0-computer/noq"
-]
+allow-git = []

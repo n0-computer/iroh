@@ -895,7 +895,7 @@ impl Inner {
             // Serve will create a WebSocketStream on an already upgraded connection
             .serve(io);
 
-        let mut io = WsBytesFramed { io: websocket };
+        let mut io = WsBytesFramed::new(websocket);
 
         let client_auth_header = request_parts.headers.get(CLIENT_AUTH_HEADER).cloned();
         let authentication = handshake::serverside(&mut io, client_auth_header).await?;

@@ -385,7 +385,7 @@ where
                 _ = done.cancelled() => {
                     trace!("actor loop cancelled, exiting");
                     // final flush
-                    self.stream.flush().await.map_err(|_| e!(RunError::Flush))?;
+                    self.flush().await.map_err(|_| e!(RunError::Flush))?;
                     break;
                 }
                 limited = rate_limited_signal(&mut self.rate_limited), if !rate_limit_notified => {
@@ -436,10 +436,7 @@ where
                 }
             }
 
-            self.stream
-                .flush()
-                .await
-                .map_err(|_| e!(RunError::TickFlush))?;
+            self.flush().await.map_err(|_| e!(RunError::TickFlush))?;
         }
         Ok(())
     }
@@ -449,6 +446,14 @@ where
     /// Errors if the send does not happen within the `timeout` duration
     async fn write_frame(&mut self, frame: RelayToClientMsg) -> Result<(), WriteFrameError> {
         tokio::time::timeout(self.timeout, self.stream.send(frame)).await??;
+        Ok(())
+    }
+
+    /// Flushes the connection.
+    ///
+    /// Errors if the flush does not happen within the `timeout` duration
+    async fn flush(&mut self) -> Result<(), WriteFrameError> {
+        tokio::time::timeout(self.timeout, self.stream.flush()).await??;
         Ok(())
     }
 
@@ -747,6 +752,72 @@ mod tests {
         config.write_timeout = Duration::from_secs(1);
         config.channel_capacity = 10;
         (config, Conn::test(client, protocol_version))
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[traced_test]
+    async fn actor_exits_when_client_leaves_pongs_unread() -> Result {
+        let key = SecretKey::from_bytes(&[1u8; 32]).public();
+        let (server, client) = tokio::io::duplex(1024);
+        let mut config = Config::new(
+            OnDisconnectGuard::empty(key),
+            ServerRelayedStream::test(server),
+            ProtocolVersion::V2,
+        );
+        config.write_timeout = Duration::from_secs(1);
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+        clients.register(config, metrics.clone());
+
+        let mut ws = tokio_websockets::ClientBuilder::new().take_over(client);
+        for _ in 0..64 {
+            ws.send(tokio_websockets::Message::ping(vec![0u8; 125]))
+                .await
+                .ok();
+        }
+        let pong = ClientToRelayMsg::Pong([0u8; 8]).to_bytes().freeze();
+        ws.send(tokio_websockets::Message::binary(pong)).await.ok();
+
+        tokio::time::timeout(PING_INTERVAL - Duration::from_secs(1), async {
+            while metrics.disconnects.get() == 0 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .std_context("actor still running")?;
+
+        clients.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[traced_test]
+    async fn shutdown_completes_while_client_leaves_pongs_unread() -> Result {
+        let key = SecretKey::from_bytes(&[2u8; 32]).public();
+        let (server, client) = tokio::io::duplex(1024);
+        let mut config = Config::new(
+            OnDisconnectGuard::empty(key),
+            ServerRelayedStream::test(server),
+            ProtocolVersion::V2,
+        );
+        config.write_timeout = Duration::from_secs(1);
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+        clients.register(config, metrics.clone());
+
+        let mut ws = tokio_websockets::ClientBuilder::new().take_over(client);
+        for _ in 0..12 {
+            ws.send(tokio_websockets::Message::ping(vec![0u8; 125]))
+                .await
+                .ok();
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(metrics.disconnects.get(), 0);
+
+        tokio::time::timeout(Duration::from_secs(10), clients.shutdown())
+            .await
+            .std_context("shutdown waits on the client")?;
+        Ok(())
     }
 
     #[tokio::test]

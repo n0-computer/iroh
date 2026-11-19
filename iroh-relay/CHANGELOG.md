@@ -3,6 +3,39 @@
 All notable changes to iroh-relay will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [1.5.0](https://github.com/n0-computer/iroh/compare/v1.4.2..1.5.0) - 2026-11-19
+
+### ⛰️  Features
+
+- *(iroh-relay)* Fix potentially leaking connections during handshake ([#4621](https://github.com/n0-computer/iroh/issues/4621)) - ([9abdae4](https://github.com/n0-computer/iroh/commit/9abdae460b54a936257c3f72bca393ae2d44bccd))
+- *(iroh-relay)* Keep the relay URL's path prefix ([#4617](https://github.com/n0-computer/iroh/issues/4617)) - ([5b98ddb](https://github.com/n0-computer/iroh/commit/5b98ddbaeb5fadea6ec8652e25b9fd1ef207e8e2))
+
+### 🐛 Bug Fixes
+
+- *(iroh-relay)* Keep proxy credentials out of the debug log ([#4653](https://github.com/n0-computer/iroh/issues/4653)) - ([f350394](https://github.com/n0-computer/iroh/commit/f35039493803c240595cc7b56a976b8bb14f8f05))
+- *(iroh-relay)* Drop packets that cannot be encoded instead of disconnecting the recv side ([#4694](https://github.com/n0-computer/iroh/issues/4694)) - ([325b3d3](https://github.com/n0-computer/iroh/commit/325b3d3e13785e52d5e159852bd0fa732d063aad))
+- *(iroh-relay)* Prevent empty datagrams payload from disconnecting recipient ([#4646](https://github.com/n0-computer/iroh/issues/4646)) - ([55181bf](https://github.com/n0-computer/iroh/commit/55181bfd33b67e70e5388adaccb218bf00312d2e))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(*)* Dependabot updates ([#4652](https://github.com/n0-computer/iroh/issues/4652)) - ([3e9a854](https://github.com/n0-computer/iroh/commit/3e9a854c3292d2fe5958294674b604331d8a350a))
+
+### Deps
+
+- Upgrade noq, tokio-rustls-acme, and patchbay deps ([#4701](https://github.com/n0-computer/iroh/issues/4701)) - ([7a863f1](https://github.com/n0-computer/iroh/commit/7a863f1b917213da7c1a8e865b35f403a0fc8072))
+
+
+## [1.4.2](https://github.com/n0-computer/iroh/compare/v1.4.1..1.4.2) - 2026-11-19
+
+### 🐛 Bug Fixes
+
+- *(iroh-relay)* Check the full frame length when decoding client frames - ([41b7244](https://github.com/n0-computer/iroh/commit/41b7244238c78fa3a0bd094e47e5639d264d8382))
+- *(iroh-relay)* Bound the client actor's flushes by the write timeout - ([fe9e92e](https://github.com/n0-computer/iroh/commit/fe9e92eee1f91d77c8c6383d94323b0f43ec98bf))
+- *(iroh-relay)* Stop reading after a ping until its pong is written - ([507ab37](https://github.com/n0-computer/iroh/commit/507ab37534d8f47ff0681761bcf3bfc359655aa6))
+- *(iroh-relay)* Prevent empty datagrams payload from disconnecting recipient ([#4646](https://github.com/n0-computer/iroh/issues/4646)) - ([e58b1e5](https://github.com/n0-computer/iroh/commit/e58b1e5c53a4d8d0189b3432ccd879659f1afd0f))
+- *(iroh-relay)* Drop packets that cannot be encoded instead of disconnecting the recv side ([#4694](https://github.com/n0-computer/iroh/issues/4694)) - ([ddb5460](https://github.com/n0-computer/iroh/commit/ddb546092f6dd7ed3f48c3e61d3bec19215eb5e7))
+
+
 ## [1.4.1](https://github.com/n0-computer/iroh/compare/v1.4.0..1.4.1) - 2026-10-21
 
 ### ⚙️ Miscellaneous Tasks

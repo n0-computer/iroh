@@ -231,20 +231,20 @@ impl PathStateSender {
                 .iter()
                 .find(|p| p.remote_addr == remote_addr && p.local_addr == local_addr)
                 .map(|p| p.handle.id());
-            if selected_path_id != state.selected {
-                state.selected = selected_path_id;
-                selected_path_id.map(|path_id| PathEvent::Selected {
-                    id: path_id,
-                    remote_addr: remote_addr.clone(),
-                    local_addr: local_addr.clone(),
-                })
-            } else {
-                None
+            if selected_path_id == state.selected {
+                return;
             }
+            state.selected = selected_path_id;
+            selected_path_id.map(|path_id| PathEvent::Selected {
+                id: path_id,
+                remote_addr: remote_addr.clone(),
+                local_addr: local_addr.clone(),
+            })
         };
+        // Notify even if the selection was cleared, which emits no event.
+        self.shared.notify.notify_waiters();
         if let Some(event) = event {
             let _ = self.events.send(event);
-            self.shared.notify.notify_waiters();
         }
     }
 
@@ -331,15 +331,15 @@ impl PathStateReceiver {
 
     /// Returns a stream of [`PathList`] snapshots tied to `conn`.
     ///
-    /// Yields the current snapshot on the first poll, then a fresh
-    /// snapshot on every state change. Ends when the state is marked
-    /// closed.
+    /// Yields a snapshot taken at creation, then one per state change.
+    /// Ends when the state is marked closed.
     pub(crate) fn stream<'a>(&'a self, conn: &'a noq::Connection) -> PathListStream<'a> {
         PathListStream {
             shared: &self.shared,
             conn,
+            // Created before the snapshot, so no change is missed.
             notified: Box::pin(self.shared.notify.notified()),
-            first_poll: true,
+            next_value: Some(self.get(conn)),
         }
     }
 }
@@ -498,9 +498,18 @@ impl<'conn> Path<'conn> {
 
 /// A stream of [`PathList`] snapshots for a connection.
 ///
-/// Returned by [`Connection::paths_stream`]. Yields the current
-/// snapshot on the first poll and a fresh snapshot whenever the open
-/// paths or the selected path change. Ends when the connection closes.
+/// Returned by [`Connection::paths_stream`]. Yields a snapshot taken at
+/// creation, then one whenever the open paths or the selected path change.
+/// Ends once the connection closes and keeps returning `None` after that.
+///
+/// After a wait method returns, the next poll yields its snapshot again.
+///
+/// # Cancel safety
+///
+/// The wait methods are cancel safe. If one is used in `tokio::select!` and
+/// another branch completes first, no snapshot is lost: the next poll of the
+/// stream yields the last snapshot the method checked, and calling it again
+/// checks the current paths before waiting.
 ///
 /// [`Connection::paths_stream`]: crate::endpoint::Connection::paths_stream
 #[derive(Debug)]
@@ -508,7 +517,95 @@ pub struct PathListStream<'conn> {
     shared: &'conn Shared,
     conn: &'conn noq::Connection,
     notified: Pin<Box<Notified<'conn>>>,
-    first_poll: bool,
+    /// The latest snapshot, if not yet yielded.
+    ///
+    /// Also backs the results of [`Self::wait_any`] and [`Self::wait_none`].
+    next_value: Option<PathList<'conn>>,
+}
+
+impl<'conn> PathListStream<'conn> {
+    /// Waits until an open path matches `predicate` and returns it.
+    ///
+    /// Checks the current paths first. Returns `None` if the stream ends first.
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is cancel safe. See [`PathListStream`](PathListStream#cancel-safety).
+    pub async fn wait_any(
+        &mut self,
+        mut predicate: impl FnMut(&Path<'_>) -> bool,
+    ) -> Option<Path<'_>> {
+        let (id, paths) = self
+            .wait_for(|paths| {
+                paths
+                    .iter()
+                    .find(|path| predicate(path))
+                    .map(|path| path.id())
+            })
+            .await?;
+        paths.get(id)
+    }
+
+    /// Waits until no open path matches `predicate` and returns the snapshot.
+    ///
+    /// Checks the current paths first. Returns `None` if the stream ends first.
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is cancel safe. See [`PathListStream`](PathListStream#cancel-safety).
+    pub async fn wait_none(
+        &mut self,
+        mut predicate: impl FnMut(&Path<'_>) -> bool,
+    ) -> Option<&PathList<'conn>> {
+        let ((), paths) = self
+            .wait_for(|paths| (!paths.iter().any(|path| predicate(&path))).then_some(()))
+            .await?;
+        Some(paths)
+    }
+
+    /// Waits until the path with `id` is closed and returns the snapshot without it.
+    ///
+    /// Checks the current paths first. Returns `None` if the stream ends first.
+    ///
+    /// If the path is already closed, it immediately returns the current snapshot.
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is cancel safe. See [`PathListStream`](PathListStream#cancel-safety).
+    pub async fn wait_closed(&mut self, id: PathId) -> Option<&PathList<'conn>> {
+        self.wait_none(|path| path.id() == id).await
+    }
+
+    /// Waits until `f` returns `Some` for the current or a later snapshot.
+    ///
+    /// Keeps the last checked snapshot in [`Self::next_value`], so cancelling
+    /// does not skip it.
+    async fn wait_for<T>(
+        &mut self,
+        mut f: impl FnMut(&PathList<'conn>) -> Option<T>,
+    ) -> Option<(T, &PathList<'conn>)> {
+        loop {
+            let paths = self.current();
+            if paths.snapshot.closed {
+                self.next_value = Some(paths);
+                return None;
+            }
+            if let Some(value) = f(&paths) {
+                return Some((value, self.next_value.insert(paths)));
+            }
+            self.next_value = Some(paths);
+            std::future::poll_fn(|cx| self.notified.as_mut().poll(cx)).await;
+        }
+    }
+
+    /// Re-arms [`Self::notified`], then returns the current state.
+    fn current(&mut self) -> PathList<'conn> {
+        self.notified.set(self.shared.notify.notified());
+        PathList {
+            snapshot: self.shared.state.lock().expect("poisoned").clone(),
+            conn: self.conn,
+        }
+    }
 }
 
 impl<'conn> Stream for PathListStream<'conn> {
@@ -516,21 +613,19 @@ impl<'conn> Stream for PathListStream<'conn> {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        if this.first_poll {
-            this.first_poll = false;
-        } else {
-            std::task::ready!(this.notified.as_mut().poll(cx));
-            this.notified.set(this.shared.notify.notified());
-        }
-        this.notified.as_mut().enable();
-        let snapshot = this.shared.state.lock().expect("poisoned").clone();
-        if snapshot.closed {
+        let paths = match this.next_value.take() {
+            Some(paths) => paths,
+            None => {
+                std::task::ready!(this.notified.as_mut().poll(cx));
+                this.current()
+            }
+        };
+        if paths.snapshot.closed {
+            // Keep it so later polls end too.
+            this.next_value = Some(paths);
             Poll::Ready(None)
         } else {
-            Poll::Ready(Some(PathList {
-                snapshot,
-                conn: this.conn,
-            }))
+            Poll::Ready(Some(paths))
         }
     }
 }
