@@ -337,6 +337,9 @@ mod tests {
 
     const ECHO_ALPN: &[u8] = b"test/echo";
 
+    #[path = "custom_path_reconnect_tests.rs"]
+    mod custom_path_reconnect_tests;
+
     #[derive(Debug, Clone)]
     struct Echo;
 
