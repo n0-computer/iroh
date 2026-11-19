@@ -3,6 +3,28 @@
 All notable changes to iroh-relay will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [1.5.0](https://github.com/n0-computer/iroh/compare/v1.4.2..1.5.0) - 2026-11-19
+
+### ⛰️  Features
+
+- *(iroh-relay)* Fix potentially leaking connections during handshake ([#4621](https://github.com/n0-computer/iroh/issues/4621)) - ([9abdae4](https://github.com/n0-computer/iroh/commit/9abdae460b54a936257c3f72bca393ae2d44bccd))
+- *(iroh-relay)* Keep the relay URL's path prefix ([#4617](https://github.com/n0-computer/iroh/issues/4617)) - ([5b98ddb](https://github.com/n0-computer/iroh/commit/5b98ddbaeb5fadea6ec8652e25b9fd1ef207e8e2))
+
+### 🐛 Bug Fixes
+
+- *(iroh-relay)* Keep proxy credentials out of the debug log ([#4653](https://github.com/n0-computer/iroh/issues/4653)) - ([f350394](https://github.com/n0-computer/iroh/commit/f35039493803c240595cc7b56a976b8bb14f8f05))
+- *(iroh-relay)* Drop packets that cannot be encoded instead of disconnecting the recv side ([#4694](https://github.com/n0-computer/iroh/issues/4694)) - ([325b3d3](https://github.com/n0-computer/iroh/commit/325b3d3e13785e52d5e159852bd0fa732d063aad))
+- *(iroh-relay)* Prevent empty datagrams payload from disconnecting recipient ([#4646](https://github.com/n0-computer/iroh/issues/4646)) - ([55181bf](https://github.com/n0-computer/iroh/commit/55181bfd33b67e70e5388adaccb218bf00312d2e))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(*)* Dependabot updates ([#4652](https://github.com/n0-computer/iroh/issues/4652)) - ([3e9a854](https://github.com/n0-computer/iroh/commit/3e9a854c3292d2fe5958294674b604331d8a350a))
+
+### Deps
+
+- Upgrade noq, tokio-rustls-acme, and patchbay deps ([#4701](https://github.com/n0-computer/iroh/issues/4701)) - ([7a863f1](https://github.com/n0-computer/iroh/commit/7a863f1b917213da7c1a8e865b35f403a0fc8072))
+
+
 ## [1.4.2](https://github.com/n0-computer/iroh/compare/v1.4.1..1.4.2) - 2026-11-19
 
 ### 🐛 Bug Fixes

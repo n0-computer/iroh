@@ -3,6 +3,48 @@
 All notable changes to iroh will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [1.5.0](https://github.com/n0-computer/iroh/compare/v1.4.2..1.5.0) - 2026-11-19
+
+### ⛰️  Features
+
+- *(iroh)* Expose noq::SendStream::set_affinity ([#4654](https://github.com/n0-computer/iroh/issues/4654)) - ([4d5b4b1](https://github.com/n0-computer/iroh/commit/4d5b4b1d39df491f6364d07293111548f5a7c057))
+- *(iroh)* Add path wait helpers ([#4672](https://github.com/n0-computer/iroh/issues/4672)) - ([1f08ed1](https://github.com/n0-computer/iroh/commit/1f08ed19282cae101667c0ed1494848e79d5441c))
+- *(iroh-relay)* Fix potentially leaking connections during handshake ([#4621](https://github.com/n0-computer/iroh/issues/4621)) - ([9abdae4](https://github.com/n0-computer/iroh/commit/9abdae460b54a936257c3f72bca393ae2d44bccd))
+- *(iroh-relay)* Keep the relay URL's path prefix ([#4617](https://github.com/n0-computer/iroh/issues/4617)) - ([5b98ddb](https://github.com/n0-computer/iroh/commit/5b98ddbaeb5fadea6ec8652e25b9fd1ef207e8e2))
+
+### 🐛 Bug Fixes
+
+- *(iroh-relay)* Keep proxy credentials out of the debug log ([#4653](https://github.com/n0-computer/iroh/issues/4653)) - ([f350394](https://github.com/n0-computer/iroh/commit/f35039493803c240595cc7b56a976b8bb14f8f05))
+- *(iroh-relay)* Drop packets that cannot be encoded instead of disconnecting the recv side ([#4694](https://github.com/n0-computer/iroh/issues/4694)) - ([325b3d3](https://github.com/n0-computer/iroh/commit/325b3d3e13785e52d5e159852bd0fa732d063aad))
+- *(iroh-relay)* Prevent empty datagrams payload from disconnecting recipient ([#4646](https://github.com/n0-computer/iroh/issues/4646)) - ([55181bf](https://github.com/n0-computer/iroh/commit/55181bfd33b67e70e5388adaccb218bf00312d2e))
+
+### 📚 Documentation
+
+- Add example for stream affinity ([#4667](https://github.com/n0-computer/iroh/issues/4667)) - ([d18a684](https://github.com/n0-computer/iroh/commit/d18a684ec870ccb8a4deb69d7c52b456e100f874))
+
+### 🧪 Testing
+
+- *(iroh)* Add patchbay test for stream affinity ([#4671](https://github.com/n0-computer/iroh/issues/4671)) - ([a87799f](https://github.com/n0-computer/iroh/commit/a87799f744081ab52fdb3b1a2273f68f8cbeeb7f))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(*)* Dependabot updates ([#4652](https://github.com/n0-computer/iroh/issues/4652)) - ([3e9a854](https://github.com/n0-computer/iroh/commit/3e9a854c3292d2fe5958294674b604331d8a350a))
+- *(ci)* Migrate CI runners mostly to blacksmith ([#4635](https://github.com/n0-computer/iroh/issues/4635)) - ([cf0d2b0](https://github.com/n0-computer/iroh/commit/cf0d2b048b625e87e9331dd3b9f921f4c0d8bf71))
+- *(deny)* Ignore unmaintained advisories for chrono and humantime ([#4696](https://github.com/n0-computer/iroh/issues/4696)) - ([a9e9e35](https://github.com/n0-computer/iroh/commit/a9e9e35999166251b68036aed1a506bf44014b80))
+- *(iroh-dns-server)* Update n0-mainline to 0.8.0 ([#4698](https://github.com/n0-computer/iroh/issues/4698)) - ([8797f94](https://github.com/n0-computer/iroh/commit/8797f944ecd198b4293baa46782c95c7db2755e5))
+- Use new minimal-crates CI step ([#4627](https://github.com/n0-computer/iroh/issues/4627)) - ([0f91067](https://github.com/n0-computer/iroh/commit/0f9106731bf1d0cdfe912f22cb67c6d4fe7d13a8))
+- Update Makefile.toml to have a normal dev workflow ([#4508](https://github.com/n0-computer/iroh/issues/4508)) - ([ebdaaef](https://github.com/n0-computer/iroh/commit/ebdaaefecc4b04300694ba4732e06a93a7f81f35))
+- Update the issue template checkboxes ([#4662](https://github.com/n0-computer/iroh/issues/4662)) - ([d27cced](https://github.com/n0-computer/iroh/commit/d27cced69e5a53385a43301b695132eca60542f4))
+
+### 🛡️ Security
+
+- *(*)* Upgrade deps in lockfile to get security fixes ([#4700](https://github.com/n0-computer/iroh/issues/4700)) - ([44c3c9b](https://github.com/n0-computer/iroh/commit/44c3c9b6fd33f84bb47b7e54f417385da9bed3c5))
+
+### Deps
+
+- Upgrade noq, tokio-rustls-acme, and patchbay deps ([#4701](https://github.com/n0-computer/iroh/issues/4701)) - ([7a863f1](https://github.com/n0-computer/iroh/commit/7a863f1b917213da7c1a8e865b35f403a0fc8072))
+
+
 ## [1.4.2](https://github.com/n0-computer/iroh/compare/v1.4.1..1.4.2) - 2026-11-19
 
 ### 🐛 Bug Fixes
