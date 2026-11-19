@@ -563,3 +563,82 @@ impl Stream for ClientStream {
         Pin::new(&mut self.stream).poll_next(cx)
     }
 }
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use std::{net::Ipv4Addr, time::Duration};
+
+    use n0_future::{SinkExt, StreamExt};
+    use rand::{RngExt, SeedableRng};
+
+    use super::*;
+    use crate::{
+        protos::relay::{Datagrams, MAX_PACKET_SIZE},
+        server::{RelayConfig, Server, ServerConfig},
+        tls::{CaTlsConfig, default_provider},
+    };
+
+    #[tokio::test]
+    async fn oversized_payload_does_not_disconnect_recipient() {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0);
+        let mut relay = RelayConfig::new((Ipv4Addr::LOCALHOST, 0));
+        relay.key_cache_capacity = Some(1024);
+        let server = Server::spawn(ServerConfig {
+            relay: Some(relay),
+            quic: None,
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+        let url: RelayUrl = format!("http://{}", server.http_addr().unwrap())
+            .parse()
+            .unwrap();
+        let tls = CaTlsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+        let mut clients = Vec::new();
+        for _ in 0..3 {
+            let secret = SecretKey::from_bytes(&rng.random());
+            let key = secret.public();
+            let c = ClientBuilder::new(url.clone(), secret, DnsResolver::new())
+                .tls_client_config(tls.clone())
+                .connect()
+                .await
+                .unwrap();
+            clients.push((c, key));
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let (mut c, _) = clients.pop().unwrap();
+        let (mut b, b_key) = clients.pop().unwrap();
+        let (mut a, _) = clients.pop().unwrap();
+
+        // Frame type (1), endpoint id (32), and ECN (1) take up 34 bytes of the frame, so a
+        // payload of MAX_PACKET_SIZE - 33 is one byte over. Written raw to bypass the client check.
+        let msg = ClientToRelayMsg::Datagrams {
+            dst_endpoint_id: b_key,
+            datagrams: Datagrams::from(vec![0u8; MAX_PACKET_SIZE - 33]),
+        };
+        a.conn.conn.send(msg.to_bytes().freeze()).await.unwrap();
+        let got = tokio::time::timeout(Duration::from_secs(3), a.next()).await;
+        assert!(
+            matches!(got, Ok(None | Some(Err(_)))),
+            "A should be disconnected, got {got:?}"
+        );
+
+        let got = tokio::time::timeout(Duration::from_millis(500), b.next()).await;
+        assert!(got.is_err(), "B should see nothing, got {got:?}");
+
+        // B should still receive traffic from other clients.
+        c.send(ClientToRelayMsg::Datagrams {
+            dst_endpoint_id: b_key,
+            datagrams: Datagrams::from(b"still here"),
+        })
+        .await
+        .unwrap();
+        let got = tokio::time::timeout(Duration::from_secs(3), b.next()).await;
+        assert!(
+            matches!(got, Ok(Some(Ok(RelayToClientMsg::Datagrams { .. })))),
+            "got {got:?}"
+        );
+    }
+}

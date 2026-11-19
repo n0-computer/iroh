@@ -91,7 +91,7 @@ impl Conn {
         secret_key: &SecretKey,
         protocol_version: ProtocolVersion,
     ) -> Result<Self, handshake::Error> {
-        let mut conn = WsBytesFramed { io };
+        let mut conn = WsBytesFramed::new(io);
 
         // exchange information with the server
         trace!("server_handshake: started");
@@ -109,13 +109,13 @@ impl Conn {
     pub(crate) fn test(io: tokio::io::DuplexStream, protocol_version: ProtocolVersion) -> Self {
         use crate::protos::relay::MAX_FRAME_SIZE;
         Self {
-            conn: WsBytesFramed {
-                io: tokio_websockets::ClientBuilder::new()
+            conn: WsBytesFramed::new(
+                tokio_websockets::ClientBuilder::new()
                     .limits(
                         tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)),
                     )
                     .take_over(MaybeTlsStream::Test(io)),
-            },
+            ),
             key_cache: KeyCache::test(),
             protocol_version,
         }

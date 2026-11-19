@@ -2290,7 +2290,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -2332,7 +2332,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "async-trait",
  "axum",
