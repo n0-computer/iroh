@@ -3,6 +3,17 @@
 All notable changes to iroh-relay will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [1.4.2](https://github.com/n0-computer/iroh/compare/v1.4.1..1.4.2) - 2026-11-19
+
+### 🐛 Bug Fixes
+
+- *(iroh-relay)* Check the full frame length when decoding client frames - ([41b7244](https://github.com/n0-computer/iroh/commit/41b7244238c78fa3a0bd094e47e5639d264d8382))
+- *(iroh-relay)* Bound the client actor's flushes by the write timeout - ([fe9e92e](https://github.com/n0-computer/iroh/commit/fe9e92eee1f91d77c8c6383d94323b0f43ec98bf))
+- *(iroh-relay)* Stop reading after a ping until its pong is written - ([507ab37](https://github.com/n0-computer/iroh/commit/507ab37534d8f47ff0681761bcf3bfc359655aa6))
+- *(iroh-relay)* Prevent empty datagrams payload from disconnecting recipient ([#4646](https://github.com/n0-computer/iroh/issues/4646)) - ([e58b1e5](https://github.com/n0-computer/iroh/commit/e58b1e5c53a4d8d0189b3432ccd879659f1afd0f))
+- *(iroh-relay)* Drop packets that cannot be encoded instead of disconnecting the recv side ([#4694](https://github.com/n0-computer/iroh/issues/4694)) - ([ddb5460](https://github.com/n0-computer/iroh/commit/ddb546092f6dd7ed3f48c3e61d3bec19215eb5e7))
+
+
 ## [1.4.1](https://github.com/n0-computer/iroh/compare/v1.4.0..1.4.1) - 2026-10-21
 
 ### ⚙️ Miscellaneous Tasks
