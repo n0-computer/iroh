@@ -41,6 +41,9 @@ serde_test = "1"
 
 [features]
 default = ["relay"]
+# On wasm32-unknown-unknown, selects getrandom's browser entropy source. Final binaries that
+# do not provide their own getrandom backend enable this; libraries should leave it off.
+wasm_js = ["getrandom?/wasm_js"]
 key = [
   "dep:curve25519-dalek",
   "dep:ed25519-dalek",

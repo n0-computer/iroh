@@ -150,6 +150,8 @@ cfg_aliases = { version = "0.2.2" }
 
 [features]
 default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]
+# See `iroh-base`'s `wasm_js` feature.
+wasm_js = ["iroh-base/wasm_js", "iroh-relay/wasm_js", "getrandom/wasm_js", "noq/wasm_js"]
 portmapper = ["dep:portmapper"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum", "dep:simple-dns"]

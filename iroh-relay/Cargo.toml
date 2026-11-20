@@ -129,6 +129,8 @@ cfg_aliases = "0.2.2"
 
 [features]
 default = ["metrics", "tls-ring"]
+# See `iroh-base`'s `wasm_js` feature.
+wasm_js = ["iroh-base/wasm_js", "getrandom/wasm_js"]
 # Enables fetching TLS trust anchors from the operating system
 platform-verifier = ["dep:rustls-platform-verifier"]
 server = [
