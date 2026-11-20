@@ -1975,16 +1975,27 @@ impl Actor {
     }
 
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
+        // A home relay that was removed from the relay map is not kept as a
+        // fallback, so removing it releases the connection.
+        let my_relay = self
+            .sock
+            .my_relay()
+            .filter(|url| self.sock.relay_map.contains(url));
         if let Some(ref mut r) = report {
             self.sock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
             if r.preferred_relay.is_none()
-                && let Some(my_relay) = self.sock.my_relay()
+                && let Some(my_relay) = my_relay
             {
                 r.preferred_relay.replace(my_relay);
             }
 
             // Notify all transports
             self.transports_network_change.on_network_change(r);
+        } else if my_relay.is_none() && self.sock.my_relay().is_some() {
+            // An empty relay map skips net_report entirely, so tell the relay
+            // transport that there is no home relay any more.
+            self.transports_network_change
+                .on_network_change(&net_report::Report::default());
         }
 
         #[cfg(not(wasm_browser))]
