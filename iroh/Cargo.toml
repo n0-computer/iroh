@@ -91,7 +91,7 @@ tokio = { version = "1", features = [
 wasm-bindgen-futures = "0.4"
 # we don't use time directly, but need to enable it because x509_parser uses these in browsers and we need to enable some feature flags for that to work
 time = { version = "0.3", features = ["wasm-bindgen"] }
-getrandom = { version = "0.4", features = ["wasm_js"] }
+getrandom = "0.4"
 
 # target-common test/dev dependencies
 [dev-dependencies]
@@ -136,6 +136,8 @@ console = { version = "0.16" }
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
 wasm-tracing = "2.1.0"
 wasm-bindgen-test = "0.3.62"
+# The test binary is a final binary, so it selects the browser entropy source.
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 # patchbay netsim test dependencies (linux only)
 [target.'cfg(target_os = "linux")'.dev-dependencies]
@@ -148,6 +150,8 @@ cfg_aliases = { version = "0.2.2" }
 
 [features]
 default = ["metrics", "fast-apple-datapath", "portmapper", "tls-ring"]
+# See `iroh-base`'s `wasm_js` feature.
+wasm_js = ["iroh-base/wasm_js", "iroh-relay/wasm_js", "getrandom/wasm_js", "noq/wasm_js"]
 portmapper = ["dep:portmapper"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum", "dep:simple-dns"]
