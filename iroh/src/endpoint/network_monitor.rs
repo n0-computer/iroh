@@ -25,8 +25,6 @@ use netwatch::netmon;
 /// never keeps a path on them:
 ///
 /// ```
-/// use std::net::IpAddr;
-///
 /// use iroh::endpoint::{DefaultNetworkMonitor, NetworkChange, NetworkMonitor, NetworkState};
 /// use n0_future::{
 ///     StreamExt,
@@ -36,20 +34,24 @@ use netwatch::netmon;
 /// #[derive(Debug)]
 /// struct WithoutTun {
 ///     inner: DefaultNetworkMonitor,
-///     tun_addr: IpAddr,
+/// }
+///
+/// fn remove_tun(state: &mut NetworkState) {
+///     state
+///         .addrs
+///         .retain(|addr| addr.interface.as_deref() != Some("tun0"));
 /// }
 ///
 /// impl NetworkMonitor for WithoutTun {
 ///     fn state(&self) -> NetworkState {
 ///         let mut state = self.inner.state();
-///         state.addrs.retain(|addr| addr.ip != self.tun_addr);
+///         remove_tun(&mut state);
 ///         state
 ///     }
 ///
 ///     fn changes(&self) -> BoxStream<NetworkChange> {
-///         let tun_addr = self.tun_addr;
-///         Box::pin(self.inner.changes().map(move |mut change| {
-///             change.state.addrs.retain(|addr| addr.ip != tun_addr);
+///         Box::pin(self.inner.changes().map(|mut change| {
+///             remove_tun(&mut change.state);
 ///             change
 ///         }))
 ///     }
@@ -109,6 +111,11 @@ pub struct NetworkState {
     pub addrs: Vec<LocalAddr>,
     /// Whether a default route exists.
     pub has_default_route: bool,
+    /// The name of the interface the default route uses, if known.
+    ///
+    /// The endpoint does not use this itself. It allows a wrapping monitor to tell
+    /// whether the default route goes through an interface it wants to hide.
+    pub default_route_interface: Option<String>,
     /// Whether an IPv4 address exists which might provide connectivity.
     pub have_v4: bool,
     /// Whether an IPv6 address exists which might provide connectivity.
@@ -135,6 +142,11 @@ impl NetworkState {
 pub struct LocalAddr {
     /// The address.
     pub ip: IpAddr,
+    /// The name of the interface the address is assigned to, if known.
+    ///
+    /// The endpoint does not use this itself. It allows a wrapping monitor to select
+    /// addresses by interface.
+    pub interface: Option<String>,
     /// Whether the address is deprecated and must not be used for new paths.
     ///
     /// This is the IPv6 notion of a deprecated address, see [RFC 4862].
@@ -148,6 +160,7 @@ impl LocalAddr {
     pub fn new(ip: IpAddr) -> Self {
         Self {
             ip,
+            interface: None,
             is_deprecated: false,
         }
     }
@@ -213,24 +226,29 @@ impl From<&netmon::State> for NetworkState {
         let addrs = {
             use netwatch::interfaces::IpNet;
 
-            let is_deprecated = |ip: IpAddr| {
-                state
-                    .interfaces
-                    .values()
-                    .flat_map(|interface| interface.addrs())
-                    .any(|net| match net {
+            // Finds the interface an address is assigned to and whether it is deprecated.
+            let lookup = |ip: IpAddr| {
+                state.interfaces.values().find_map(|interface| {
+                    let net = interface.addrs().find(|net| net.addr() == ip)?;
+                    let is_deprecated = match net {
                         IpNet::V4(_) => false,
-                        IpNet::V6 { net, flags, .. } => net.addr() == ip && flags.deprecated,
-                    })
+                        IpNet::V6 { flags, .. } => flags.deprecated,
+                    };
+                    Some((interface.name().to_string(), is_deprecated))
+                })
             };
             let local = &state.local_addresses;
             local
                 .regular
                 .iter()
                 .chain(&local.loopback)
-                .map(|ip| LocalAddr {
-                    ip: *ip,
-                    is_deprecated: is_deprecated(*ip),
+                .map(|ip| {
+                    let (interface, is_deprecated) = lookup(*ip).unzip();
+                    LocalAddr {
+                        ip: *ip,
+                        interface,
+                        is_deprecated: is_deprecated.unwrap_or(false),
+                    }
                 })
                 .collect()
         };
@@ -240,6 +258,7 @@ impl From<&netmon::State> for NetworkState {
         Self {
             addrs,
             has_default_route: state.default_route_interface.is_some(),
+            default_route_interface: state.default_route_interface.clone(),
             have_v4: state.have_v4,
             have_v6: state.have_v6,
         }
@@ -306,6 +325,7 @@ mod tests {
         NetworkState {
             addrs: ips.iter().map(|ip| LocalAddr::new((*ip).into())).collect(),
             has_default_route: true,
+            default_route_interface: None,
             have_v4: true,
             have_v6: false,
         }
@@ -403,6 +423,15 @@ mod tests {
             .await?;
         assert_eq!(ep.addr().ip_addrs().count(), 0);
         ep.close().await;
+        Ok(())
+    }
+
+    /// The default monitor reports which interface each address belongs to.
+    #[tokio::test]
+    async fn default_monitor_reports_interfaces() -> Result {
+        let state = DefaultNetworkMonitor::new().await?.state();
+        assert!(!state.addrs.is_empty(), "host has no addresses");
+        assert!(state.addrs.iter().any(|addr| addr.interface.is_some()));
         Ok(())
     }
 }
