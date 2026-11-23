@@ -11,12 +11,12 @@ on:
       - "**/Cargo.toml"
       - "**/Cargo.lock"
       - "**/deny.toml"
-    push:
-      branches: [main]
-      paths:
-        - "**/Cargo.toml"
-        - "**/Cargo.lock"
-        - "**/deny.toml"
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/deny.toml"
 
 permissions:
   contents: read
