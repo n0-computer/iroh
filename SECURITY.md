@@ -9,6 +9,10 @@ descriptions here in that sense. Often some subset of behaviour or a
 special case is called out, rather than a comprehensive explanation of
 iroh's designk.
 
+Neither is this a description of how number 0 or anyone else operates
+any infrastructure. It exists to understand what the technical
+boundaries are.
+
 ## Relay Servers
 
 Iroh uses relay servers to establish connectivity with other peers
