@@ -6,7 +6,11 @@
 //!
 //! [`Builder::network_monitor`]: crate::endpoint::Builder::network_monitor
 
-use std::{fmt::Debug, net::IpAddr, sync::Arc};
+use std::{
+    fmt::Debug,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 
 use n0_error::{e, stack_error};
 use n0_future::boxed::{BoxFuture, BoxStream};
@@ -120,6 +124,22 @@ pub struct NetworkState {
     pub have_v4: bool,
     /// Whether an IPv6 address exists which might provide connectivity.
     pub have_v6: bool,
+    /// Whether the network is metered or otherwise expensive to use, like a mobile
+    /// network.
+    ///
+    /// The endpoint does not use this itself and [`DefaultNetworkMonitor`] never sets
+    /// it. A monitor which knows, like one fed by a mobile operating system, can report
+    /// it for wrapping monitors and future use.
+    pub is_expensive: bool,
+    /// Addresses under which the host is reachable from outside its local network.
+    ///
+    /// The endpoint adds these to its direct addresses, like those set with
+    /// [`Builder::external_addr`]. This is for a monitor which knows of a port
+    /// forwarding or public address the endpoint can not discover itself.
+    /// [`DefaultNetworkMonitor`] reports none.
+    ///
+    /// [`Builder::external_addr`]: crate::endpoint::Builder::external_addr
+    pub external_addrs: Vec<SocketAddr>,
 }
 
 impl NetworkState {
@@ -261,6 +281,8 @@ impl From<&netmon::State> for NetworkState {
             default_route_interface: state.default_route_interface.clone(),
             have_v4: state.have_v4,
             have_v6: state.have_v6,
+            is_expensive: state.is_expensive,
+            external_addrs: Vec::new(),
         }
     }
 }
@@ -297,7 +319,10 @@ mod tests {
         }
 
         fn set(&self, ips: &[Ipv4Addr]) {
-            let state = test_state(ips);
+            self.set_state(test_state(ips));
+        }
+
+        fn set_state(&self, state: NetworkState) {
             *self.state.lock().expect("poisoned") = state.clone();
             self.changes.send(NetworkChange::new(state, false)).ok();
         }
@@ -328,6 +353,8 @@ mod tests {
             default_route_interface: None,
             have_v4: true,
             have_v6: false,
+            is_expensive: false,
+            external_addrs: Vec::new(),
         }
     }
 
@@ -422,6 +449,38 @@ mod tests {
             .bind()
             .await?;
         assert_eq!(ep.addr().ip_addrs().count(), 0);
+        ep.close().await;
+        Ok(())
+    }
+
+    /// External addresses reported by the monitor become direct addresses.
+    #[tokio::test]
+    #[traced_test]
+    async fn monitor_external_addrs_are_advertised() -> Result {
+        let local = Ipv4Addr::new(192, 0, 2, 1);
+        let external: SocketAddr = "192.0.2.200:4433".parse().anyerr()?;
+
+        let monitor = TestMonitor::new(&[local]);
+        let ep = Endpoint::builder(presets::Minimal)
+            .network_monitor(monitor.clone())
+            .bind()
+            .await?;
+        wait_for_test_ips(&ep, &[local]).await?;
+
+        let mut state = test_state(&[local]);
+        state.external_addrs.push(external);
+        monitor.set_state(state);
+        let mut addrs = ep.watch_addr().stream();
+        time::timeout(time::Duration::from_secs(10), async {
+            while let Some(addr) = addrs.next().await {
+                if addr.ip_addrs().any(|addr| *addr == external) {
+                    break;
+                }
+            }
+        })
+        .await
+        .anyerr()?;
+
         ep.close().await;
         Ok(())
     }
