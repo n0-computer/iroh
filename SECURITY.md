@@ -28,7 +28,7 @@ involved in establishing connections:
 ### Blind relays
 
 Relay servers are considered "blind" as they only see encrypted
-traffic. But this does not mean they have no information:
+traffic. However, they could obtain the following information:
 
 - Each connected EndpointId is known as each iroh endpoint
   authenticates using this.
