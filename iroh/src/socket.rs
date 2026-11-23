@@ -941,8 +941,6 @@ impl EndpointInner {
             tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
             relay_map: relay_map.clone(),
-            #[cfg(not(wasm_browser))]
-            configure_socket: configure_socket.clone(),
         };
 
         let shutdown_state = ShutdownState::default();

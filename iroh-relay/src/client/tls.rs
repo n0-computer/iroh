@@ -405,18 +405,6 @@ fn pop_family(addrs: &mut VecDeque<IpAddr>, next_is_v6: &mut bool) -> Option<IpA
     Some(addr)
 }
 
-fn url_port(url: &Url) -> Option<u16> {
-    if let Some(port) = url.port() {
-        return Some(port);
-    }
-
-    match url.scheme() {
-        "http" | "ws" => Some(80),
-        "https" | "wss" => Some(443),
-        _ => None,
-    }
-}
-
 /// Connects a TCP stream to `addr`, running the socket hook first.
 async fn connect_tcp(
     addr: SocketAddr,
@@ -432,6 +420,18 @@ async fn connect_tcp(
     };
     configure(SocketRef::new(&socket), SocketTarget::RelayConnect(addr))?;
     socket.connect(addr).await
+}
+
+fn url_port(url: &Url) -> Option<u16> {
+    if let Some(port) = url.port() {
+        return Some(port);
+    }
+
+    match url.scheme() {
+        "http" | "ws" => Some(80),
+        "https" | "wss" => Some(443),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

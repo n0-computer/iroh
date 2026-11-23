@@ -931,6 +931,8 @@ pub(crate) struct RelaySendItem {
 
 pub(super) struct RelayActor {
     config: Config,
+    #[cfg(not(wasm_browser))]
+    configure_socket: Option<ConfigureSocket>,
     /// Queue on which to put received datagrams.
     relay_datagram_recv_queue: mpsc::Sender<RelayRecvDatagram>,
     /// The actors managing each currently used relay server.
@@ -958,10 +960,6 @@ pub(crate) struct Config {
     /// Per-relay configuration. Consulted when starting a connection to
     /// look up the auth token and any future per-relay options.
     pub relay_map: RelayMap,
-    /// Hook run on the socket of each relay connection before it is dialed.
-    #[cfg(not(wasm_browser))]
-    #[debug(skip)]
-    pub configure_socket: Option<ConfigureSocket>,
 }
 
 /// Connection state of the home relay.
@@ -1136,11 +1134,22 @@ impl RelayActor {
     ) -> Self {
         Self {
             config,
+            #[cfg(not(wasm_browser))]
+            configure_socket: None,
             relay_datagram_recv_queue,
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
         }
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub(super) fn with_configure_socket(
+        mut self,
+        configure_socket: Option<ConfigureSocket>,
+    ) -> Self {
+        self.configure_socket = configure_socket;
+        self
     }
 
     pub(super) async fn run(
@@ -1371,7 +1380,7 @@ impl RelayActor {
             tls_config: self.config.tls_config.clone(),
             auth_token,
             #[cfg(not(wasm_browser))]
-            configure_socket: self.config.configure_socket.clone(),
+            configure_socket: self.configure_socket.clone(),
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1566,7 +1575,6 @@ mod tests {
                 .expect("infallible"),
             metrics: Default::default(),
             relay_map: RelayMap::empty(),
-            configure_socket: None,
         };
         let mut actor =
             RelayActor::new(config, relay_datagram_recv_queue, CancellationToken::new());

@@ -223,12 +223,19 @@ impl Transports {
             ip_configs
         };
         #[cfg(not(wasm_browser))]
-        let ip = IpTransports::bind(ip_configs.into_iter(), metrics, configure_socket)?;
+        let ip = IpTransports::bind(ip_configs.into_iter(), metrics, configure_socket.clone())?;
 
         let relay = configs
             .iter()
             .filter(|t| matches!(t, TransportConfig::Relay { .. }))
-            .map(|_c| RelayTransport::new(relay_actor_config.clone(), shutdown_token.child_token()))
+            .map(|_c| {
+                RelayTransport::new_with_configure_socket(
+                    relay_actor_config.clone(),
+                    shutdown_token.child_token(),
+                    #[cfg(not(wasm_browser))]
+                    configure_socket.clone(),
+                )
+            })
             .collect();
 
         let mut custom = Vec::new();
