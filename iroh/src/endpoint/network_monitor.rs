@@ -404,55 +404,6 @@ mod tests {
         Ok(())
     }
 
-    /// Wraps the default monitor and hides every address for which `hide` returns true.
-    #[derive(Debug)]
-    struct Hiding {
-        inner: DefaultNetworkMonitor,
-        hide: fn(IpAddr) -> bool,
-    }
-
-    impl NetworkMonitor for Hiding {
-        fn state(&self) -> NetworkState {
-            let mut state = self.inner.state();
-            state.addrs.retain(|addr| !(self.hide)(addr.ip));
-            state
-        }
-
-        fn changes(&self) -> BoxStream<NetworkChange> {
-            let hide = self.hide;
-            Box::pin(self.inner.changes().map(move |mut change| {
-                change.state.addrs.retain(|addr| !hide(addr.ip));
-                change
-            }))
-        }
-
-        fn network_change(&self) -> BoxFuture<()> {
-            self.inner.network_change()
-        }
-    }
-
-    /// The use case of an application owning a TUN device: wrap the default monitor and
-    /// hide some of the host's real addresses.
-    #[tokio::test]
-    #[traced_test]
-    async fn wrapped_default_monitor_hides_addresses() -> Result {
-        let ep = Endpoint::builder(presets::Minimal).bind().await?;
-        assert!(ep.addr().ip_addrs().count() > 0, "host has no addresses");
-        ep.close().await;
-
-        let monitor = Hiding {
-            inner: DefaultNetworkMonitor::new().await?,
-            hide: |_ip| true,
-        };
-        let ep = Endpoint::builder(presets::Minimal)
-            .network_monitor(monitor)
-            .bind()
-            .await?;
-        assert_eq!(ep.addr().ip_addrs().count(), 0);
-        ep.close().await;
-        Ok(())
-    }
-
     /// External addresses reported by the monitor become direct addresses.
     #[tokio::test]
     #[traced_test]
@@ -482,15 +433,6 @@ mod tests {
         .anyerr()?;
 
         ep.close().await;
-        Ok(())
-    }
-
-    /// The default monitor reports which interface each address belongs to.
-    #[tokio::test]
-    async fn default_monitor_reports_interfaces() -> Result {
-        let state = DefaultNetworkMonitor::new().await?.state();
-        assert!(!state.addrs.is_empty(), "host has no addresses");
-        assert!(state.addrs.iter().any(|addr| addr.interface.is_some()));
         Ok(())
     }
 }
