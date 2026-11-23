@@ -1,0 +1,26 @@
+# Run cargo-deny advisory checks on PRs changing dependencies.
+#
+# This can not be made a required check as it does not trigger on all
+# pull requests.
+
+name: Cargo Deny Advisories
+
+on:
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/deny.toml"
+    push:
+      branches: [main]
+      paths:
+        - "**/Cargo.toml"
+        - "**/Cargo.lock"
+        - "**/deny.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny-advisories:
+    uses: "n0-computer/workflows/.github/workflows/cargo-deny-advisories.yaml@flub/deny"
