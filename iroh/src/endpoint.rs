@@ -86,12 +86,17 @@ use crate::{
 mod bind;
 mod connection;
 pub(crate) mod hooks;
+mod network_monitor;
 pub mod presets;
 pub(crate) mod quic;
 
 #[cfg(not(wasm_browser))]
 pub use bind::{BindOpts, InvalidSocketAddr, ToSocketAddr};
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
+pub use network_monitor::{
+    DefaultNetworkMonitor, LocalAddr, NetworkChange, NetworkMonitor, NetworkMonitorError,
+    NetworkState,
+};
 
 #[cfg(feature = "qlog")]
 pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
@@ -150,6 +155,7 @@ pub struct Builder {
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
+    network_monitor: Option<Arc<dyn NetworkMonitor>>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -218,6 +224,7 @@ impl Builder {
             net_report_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
+            network_monitor: None,
         }
     }
 
@@ -284,6 +291,7 @@ impl Builder {
             net_report_config: self.net_report_config,
             static_config,
             configured_addrs: self.configured_addrs,
+            network_monitor: self.network_monitor,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -659,6 +667,18 @@ impl Builder {
     /// adding addresses at runtime.
     pub fn external_addr(mut self, addr: SocketAddr) -> Self {
         self.configured_addrs.insert(addr);
+        self
+    }
+
+    /// Sets the source of the endpoint's knowledge about the local network.
+    ///
+    /// By default the endpoint watches the operating system for the local IP addresses
+    /// and changes to them, using a [`DefaultNetworkMonitor`]. Setting a monitor replaces
+    /// this, the endpoint will then only know about the network what the monitor reports.
+    ///
+    /// See [`NetworkMonitor`] for details and an example.
+    pub fn network_monitor(mut self, monitor: impl NetworkMonitor) -> Self {
+        self.network_monitor = Some(Arc::new(monitor));
         self
     }
 
