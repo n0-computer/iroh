@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["Empty","Minimal","N0","N0DisableRelay"],"trait":["Preset"]};
