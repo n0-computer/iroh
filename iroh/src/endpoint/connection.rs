@@ -1151,6 +1151,16 @@ impl<T: ConnectionState> Connection<T> {
 }
 
 impl Connection<HandshakeCompleted> {
+    /// Wraps a connection registered directly with the remote state actor by a test.
+    #[cfg(all(test, not(wasm_browser), with_crypto_provider))]
+    pub(crate) fn for_test(inner: noq::Connection, paths: PathStateReceiver) -> Self {
+        let info = static_info_from_conn(&inner).expect("test connection completed the handshake");
+        Self {
+            inner,
+            data: HandshakeCompletedData { info, paths },
+        }
+    }
+
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> &[u8] {
         &self.data.info.alpn
@@ -1695,6 +1705,109 @@ mod tests {
         client.close().await;
 
         Ok(())
+    }
+
+    /// A restarted peer can have a new direct port while the old connection
+    /// is still alive on the server.
+    #[cfg(not(wasm_browser))]
+    #[tokio::test]
+    async fn restarted_peer_selects_its_direct_path_with_relay() {
+        use crate::socket::{
+            biased_rtt_path_selector::BiasedRttPathSelector,
+            remote_map::{PathSelection, PathSelectionContext, PathSelector},
+        };
+
+        // Keep the first direct path preferred regardless of loopback RTT jitter.
+        #[derive(Debug)]
+        struct KeepDirect;
+        impl PathSelector for KeepDirect {
+            fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection {
+                if ctx.current().is_some_and(|p| p.is_ip()) {
+                    PathSelection::none()
+                } else {
+                    BiasedRttPathSelector::default().select(ctx)
+                }
+            }
+        }
+
+        let (map, url, _relay) = run_relay_server().await.unwrap();
+        let builder = || {
+            Endpoint::builder(presets::Minimal)
+                .clear_ip_transports()
+                .bind_addr((Ipv4Addr::LOCALHOST, 0))
+                .unwrap()
+        };
+        let relayed = || {
+            builder()
+                .relay_mode(RelayMode::Custom(map.clone()))
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+        };
+        let mut server = relayed().alpns(vec![TEST_ALPN.to_vec()]);
+        server.path_selector = std::sync::Arc::new(KeepDirect);
+        let server = server.bind().await.unwrap();
+        server.online().await;
+
+        let key = SecretKey::generate();
+        let first_key = key.clone();
+        let direct = EndpointAddr::new(server.id()).with_ip_addr(server.bound_sockets()[0]);
+        // Stop the peer's I/O without sending CONNECTION_CLOSE. Hold its handles
+        // so the old socket and port remain distinct from those of its replacement.
+        let first = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let handles = runtime.block_on(async {
+                let ep = builder().secret_key(first_key).bind().await.unwrap();
+                let conn = ep.connect(direct, TEST_ALPN).await.unwrap();
+                conn.inner.handshake_confirmed().await.unwrap();
+                (ep, conn)
+            });
+            runtime.shutdown_background();
+            handles
+        });
+        let original = server.accept().await.unwrap().await.unwrap();
+        let (_old_client, _old_conn) = first.await.unwrap();
+        let old_port = original
+            .paths()
+            .iter()
+            .find(|p| p.is_selected())
+            .unwrap()
+            .remote_addr()
+            .clone();
+        let client = relayed().secret_key(key).bind().await.unwrap();
+        client.online().await;
+        let (new, accepted) = tokio::join!(
+            client.connect(
+                EndpointAddr::new(server.id()).with_relay_url(url),
+                TEST_ALPN
+            ),
+            async { server.accept().await.unwrap().await.unwrap() },
+        );
+        let _new = new.unwrap();
+        let direct = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut stream = accepted.paths_stream();
+            loop {
+                let paths = stream.next().await.unwrap();
+                if paths.iter().any(|p| p.is_relay())
+                    && let Some(path) = paths.iter().find(|p| p.is_ip() && p.is_selected())
+                {
+                    break path.id();
+                }
+            }
+        })
+        .await
+        .expect("server did not select the restarted peer's direct path");
+        assert_eq!(
+            accepted.inner.path(direct).unwrap().status().unwrap(),
+            noq::PathStatus::Available
+        );
+        assert_ne!(
+            accepted.paths().get(direct).unwrap().remote_addr(),
+            &old_port
+        );
+        assert!(original.close_reason().is_none());
+        tokio::join!(server.close(), client.close());
     }
 
     /// Tests the [`PathListStream`] wait helpers.
