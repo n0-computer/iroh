@@ -75,7 +75,6 @@ use crate::{
     socket::{
         self, EndpointInner, RemoteStateActorStoppedError, StaticConfig,
         biased_rtt_path_selector::BiasedRttPathSelector,
-        mapped_addrs::MappedAddr,
         remote_map::PathSelector,
         transports::{RelayConnectionFailure, RelayConnectionState},
     },
@@ -1141,7 +1140,7 @@ impl Endpoint {
             "connecting",
         );
 
-        let mapped_addr = self.inner.resolve_remote(endpoint_addr).await??;
+        let attempt = self.inner.resolve_remote(endpoint_addr).await??;
 
         let transport_config = options
             .transport_config
@@ -1158,14 +1157,14 @@ impl Endpoint {
             .static_config
             .create_client_config(alpn_protocols, transport_config.clone());
 
-        let dest_addr = mapped_addr.private_socket_addr();
+        let dest_addr = attempt.private_socket_addr();
         let server_name = &tls::name::encode(endpoint_id);
         let connect =
             self.inner
                 .noq_endpoint()
                 .connect_with(client_config, dest_addr, server_name)?;
 
-        Ok(Connecting::new(connect, self.clone(), endpoint_id))
+        Ok(Connecting::new(connect, self.clone(), endpoint_id, attempt))
     }
 
     /// Accepts an incoming connection on the endpoint.

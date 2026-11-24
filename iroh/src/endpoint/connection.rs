@@ -30,7 +30,9 @@ use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
 use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
-use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
+use n0_future::{
+    TryFutureExt, future::Boxed as BoxFuture, task::AbortOnDropHandle, time::Duration,
+};
 use noq::WeakConnectionHandle as NoqWeakConnectionHandle;
 use pin_project::pin_project;
 use tracing::{error, event, warn};
@@ -48,6 +50,7 @@ use crate::{
     },
     socket::{
         RemoteStateActorStoppedError,
+        mapped_addrs::ConnectionAttempt,
         remote_map::{PathEventStream, PathList, PathListStream, PathStateReceiver},
         transports::{self, LocalTransportAddr},
     },
@@ -236,7 +239,7 @@ impl IntoFuture for Incoming {
     fn into_future(self) -> Self::IntoFuture {
         IncomingFuture(Box::pin(async move {
             let noq_conn = self.inner.into_future().await?;
-            let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
+            let conn = conn_from_noq_conn(noq_conn, &self.ep, None)?.await?;
             Ok(conn)
         }))
     }
@@ -317,6 +320,7 @@ pub enum AuthenticationError {
 fn conn_from_noq_conn(
     conn: noq::Connection,
     ep: &Endpoint,
+    attempt: Option<ConnectionAttempt>,
 ) -> Result<
     impl Future<Output = Result<Connection, ConnectingError>> + Send + 'static,
     ConnectingError,
@@ -350,6 +354,7 @@ fn conn_from_noq_conn(
     let inner = ep.inner.clone();
     Ok(async move {
         let paths = fut.await?;
+        drop(attempt);
         let conn = Connection {
             data: HandshakeCompletedData { info, paths },
             inner: conn,
@@ -418,6 +423,11 @@ fn remote_id_from_noq_conn(conn: &noq::Connection) -> Result<EndpointId, RemoteE
 #[derive(derive_more::Debug)]
 pub struct Connecting {
     inner: noq::Connecting,
+    /// Keeps this attempt's address alive and cancels fallback sends when it finishes.
+    attempt: Option<ConnectionAttempt>,
+    // into_0rtt is synchronous and may be called outside the runtime that created the dial.
+    #[cfg(not(wasm_browser))]
+    runtime: tokio::runtime::Handle,
     /// Future to register the connection with the socket.
     ///
     /// This is set and polled after `inner` completes. We are using an option instead of an enum
@@ -486,9 +496,13 @@ impl Connecting {
         inner: noq::Connecting,
         ep: Endpoint,
         remote_endpoint_id: EndpointId,
+        attempt: ConnectionAttempt,
     ) -> Self {
         Self {
             inner,
+            attempt: Some(attempt),
+            #[cfg(not(wasm_browser))]
+            runtime: tokio::runtime::Handle::current(),
             ep,
             remote_endpoint_id,
             register_with_socket: None,
@@ -534,11 +548,27 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<OutgoingZeroRttConnection, Connecting> {
         match self.inner.into_0rtt() {
             Ok((noq_conn, zrtt_accepted)) => {
+                // Drive the handshake notification even if the application only uses streams.
+                // The last 0-RTT handle drops the driver if the handshake is still pending.
+                let completed = zrtt_accepted.shared();
+                let finish_attempt = {
+                    let completed = completed.clone();
+                    async move {
+                        completed.await;
+                        drop(self.attempt);
+                    }
+                };
+                #[cfg(not(wasm_browser))]
+                let driver = self.runtime.spawn(finish_attempt);
+                #[cfg(wasm_browser)]
+                let driver = n0_future::task::spawn(finish_attempt);
+                let driver = AbortOnDropHandle::new(driver);
                 let accepted: BoxFuture<_> = Box::pin({
                     let noq_conn = noq_conn.clone();
                     async move {
-                        let accepted = zrtt_accepted.await;
-                        let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
+                        let accepted = completed.await;
+                        drop(driver);
+                        let conn = conn_from_noq_conn(noq_conn, &self.ep, None)?.await?;
                         Ok(match accepted {
                             true => ZeroRttStatus::Accepted(conn),
                             false => ZeroRttStatus::Rejected(conn),
@@ -579,8 +609,13 @@ impl Future for Connecting {
             if let Some(fut) = &mut self.register_with_socket {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
-                let noq_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                let fut = conn_from_noq_conn(noq_conn, &self.ep)?;
+                let result = std::task::ready!(self.inner.poll_unpin(cx));
+                if result.is_err() {
+                    self.attempt.take();
+                }
+                let noq_conn = result?;
+                let attempt = self.attempt.take();
+                let fut = conn_from_noq_conn(noq_conn, &self.ep, attempt)?;
                 self.register_with_socket = Some(Box::pin(fut.err_into()));
             }
         }
@@ -633,7 +668,7 @@ impl Accepting {
             let noq_conn = noq_conn.clone();
             async move {
                 let _ = zrtt_accepted.await;
-                let conn = conn_from_noq_conn(noq_conn, &self.ep)?.await?;
+                let conn = conn_from_noq_conn(noq_conn, &self.ep, None)?.await?;
                 Ok(conn)
             }
         });
@@ -677,7 +712,7 @@ impl Future for Accepting {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
                 let noq_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                match conn_from_noq_conn(noq_conn, &self.ep) {
+                match conn_from_noq_conn(noq_conn, &self.ep, None) {
                     Err(err) => return Poll::Ready(Err(err)),
                     Ok(fut) => self.register_with_socket = Some(Box::pin(fut.err_into())),
                 };

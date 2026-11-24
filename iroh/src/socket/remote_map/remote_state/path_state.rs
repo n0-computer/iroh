@@ -166,9 +166,10 @@ impl RemotePathState {
         }
     }
 
-    /// Returns `true` if there are any queued resolve requests from [`Self::resolve_remote`].
-    pub(super) fn resolve_requests_is_empty(&self) -> bool {
-        self.pending_resolve_requests.is_empty()
+    /// Discard cancelled requests and report whether anyone is still waiting for a path.
+    pub(super) fn has_pending_resolve_requests(&mut self) -> bool {
+        self.pending_resolve_requests.retain(|tx| !tx.is_closed());
+        !self.pending_resolve_requests.is_empty()
     }
 
     /// Notifies that a Address Lookup run has finished.
