@@ -23,4 +23,4 @@ permissions:
 
 jobs:
   cargo-deny-advisories:
-    uses: "n0-computer/workflows/.github/workflows/cargo-deny-advisories.yaml@flub/deny"
+    uses: "n0-computer/workflows/.github/workflows/cargo-deny.yaml@flub/deny"

@@ -19,6 +19,6 @@ permissions:
 
 jobs:
   cargo-deny:
-    uses: "n0-computer/workflows/.github/workflows/cargo-deny-advisories.yaml@flub/deny"
+    uses: "n0-computer/workflows/.github/workflows/cargo-deny.yaml@flub/deny"
     secrets:
       DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
