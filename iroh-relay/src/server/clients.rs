@@ -32,8 +32,35 @@ pub struct Clients(Arc<Inner>);
 struct Inner {
     /// The list of all currently connected clients.
     clients: DashMap<EndpointId, ClientState>,
-    /// Map of which client has sent where
+    /// Map of which client has sent to which other client.
+    ///
+    /// Used to send [`EndpointGone`](crate::protos::relay::RelayToClientMsg::EndpointGone)
+    /// notifications when a client disconnects.
     sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
+    /// Reverse index of [`Inner::sent_to`]: which clients have sent to this client.
+    ///
+    /// Used to prune a disconnected endpoint from its peers' `sent_to` sets, so the
+    /// relation maps stay bounded by the currently connected endpoints.
+    sent_from: DashMap<EndpointId, HashSet<EndpointId>>,
+}
+
+/// Removes `endpoint_id` from the relation set at `key`, dropping the entry if it
+/// becomes empty.
+///
+/// Racy emptiness is benign: if a concurrent `send_packet` re-populates the set
+/// between the mutation and the removal check, the entry is kept.
+fn remove_relation(
+    map: &DashMap<EndpointId, HashSet<EndpointId>>,
+    key: &EndpointId,
+    endpoint_id: &EndpointId,
+) {
+    if let Some(mut set) = map.get_mut(key) {
+        set.remove(endpoint_id);
+        if set.is_empty() {
+            drop(set);
+            map.remove_if(key, |_, set| set.is_empty());
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -115,6 +142,7 @@ impl Clients {
         );
 
         let mut notify_peers = None;
+        let mut fully_removed = false;
 
         self.0.clients.remove_if_mut(&endpoint_id, |_id, state| {
             if state.active.connection_id() == connection_id {
@@ -130,6 +158,7 @@ impl Clients {
                 } else {
                     // No inactive clients: collect sent_to set for peer-gone notifications.
                     notify_peers = self.0.sent_to.remove(&endpoint_id).map(|(_, peers)| peers);
+                    fully_removed = true;
                     // Remove entry from the client map.
                     true
                 }
@@ -143,6 +172,23 @@ impl Clients {
                 false
             }
         });
+
+        if fully_removed {
+            // Prune the removed endpoint from the relation maps so they stay bounded by
+            // the currently connected endpoints:
+            // - peers that sent to it no longer list it in their `sent_to` set
+            // - peers it sent to no longer list it in their `sent_from` set
+            if let Some((_, senders)) = self.0.sent_from.remove(&endpoint_id) {
+                for sender in senders {
+                    remove_relation(&self.0.sent_to, &sender, &endpoint_id);
+                }
+            }
+            if let Some(receivers) = &notify_peers {
+                for receiver in receivers {
+                    remove_relation(&self.0.sent_from, receiver, &endpoint_id);
+                }
+            }
+        }
 
         // Inform peers that this endpoint is gone.
         // Done outside the remove_if_mut closure to avoid DashMap deadlocks.
@@ -195,6 +241,26 @@ impl Clients {
         }
         true
     }
+    /// Records that `src` has sent packets to `dst`.
+    ///
+    /// Established peer pairs are the common case. Avoid taking write locks on both
+    /// relation maps for every packet once their relationship has been recorded.
+    fn record_send_relation(&self, src: EndpointId, dst: EndpointId) {
+        if self
+            .0
+            .sent_to
+            .get(&src)
+            .is_some_and(|peers| peers.contains(&dst))
+        {
+            return;
+        }
+
+        // Concurrent first packets can both miss the read-only fast path. Only the
+        // task that inserts the forward relation also inserts the reverse relation.
+        if self.0.sent_to.entry(src).or_default().insert(dst) {
+            self.0.sent_from.entry(dst).or_default().insert(src);
+        }
+    }
 
     /// Attempt to send a packet to client with [`EndpointId`] `dst`.
     pub(super) fn send_packet(
@@ -211,8 +277,7 @@ impl Clients {
         };
         match client.active.try_send_packet(src, data) {
             Ok(_) => {
-                // Record sent_to relationship
-                self.0.sent_to.entry(src).or_default().insert(dst);
+                self.record_send_relation(src, dst);
                 Ok(())
             }
             Err(TrySendError::Full(_)) => {
@@ -513,6 +578,129 @@ mod tests {
         // B should receive EndpointGone(a_key): notifying B that A is gone
         let frame = recv_frame(FrameType::EndpointGone, &mut b_rw).await?;
         assert_eq!(frame, RelayToClientMsg::EndpointGone(a_key));
+
+        clients.shutdown().await;
+        Ok(())
+    }
+
+    fn connected_endpoints(clients: &Clients) -> HashSet<EndpointId> {
+        clients.0.clients.iter().map(|entry| *entry.key()).collect()
+    }
+
+    /// Asserts the relation maps only reference currently connected endpoints.
+    ///
+    /// A disconnected endpoint must neither have its own entry (it can no longer send)
+    /// nor be referenced by any other entry (it can no longer receive).
+    fn assert_relations_clean(clients: &Clients) {
+        let connected = connected_endpoints(clients);
+        for entry in clients.0.sent_to.iter() {
+            let src = *entry.key();
+            assert!(
+                connected.contains(&src),
+                "sent_to has entry for disconnected endpoint {:?}",
+                src
+            );
+            for dst in entry.value() {
+                assert!(
+                    connected.contains(dst),
+                    "sent_to[{:?}] references disconnected endpoint {:?}",
+                    src,
+                    dst
+                );
+            }
+        }
+        for entry in clients.0.sent_from.iter() {
+            let dst = *entry.key();
+            assert!(
+                connected.contains(&dst),
+                "sent_from has entry for disconnected endpoint {:?}",
+                dst
+            );
+            for src in entry.value() {
+                assert!(
+                    connected.contains(src),
+                    "sent_from[{:?}] references disconnected endpoint {:?}",
+                    dst,
+                    src
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_sent_to_pruned_on_destination_disconnect() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let a_key = SecretKey::from_bytes(&rng.random()).public();
+        let b_key = SecretKey::from_bytes(&rng.random()).public();
+        let c_key = SecretKey::from_bytes(&rng.random()).public();
+
+        let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
+
+        // Register long-lived client A and transient clients B and C.
+        let (builder_a, _a_rw) = test_client_builder(a_key);
+        let (builder_b, _b_rw) = test_client_builder(b_key);
+        let (builder_c, _c_rw) = test_client_builder(c_key);
+        clients.register(builder_a, metrics.clone());
+        clients.register(builder_b, metrics.clone());
+        clients.register(builder_c, metrics.clone());
+
+        // A sends to both B and C.
+        let data = b"hello!";
+        clients.send_packet(b_key, Datagrams::from(&data[..]), a_key, &metrics)?;
+        clients.send_packet(c_key, Datagrams::from(&data[..]), a_key, &metrics)?;
+
+        assert_relations_clean(&clients);
+        assert_eq!(
+            clients.0.sent_to.get(&a_key).map(|s| s.value().len()),
+            Some(2)
+        );
+
+        // B disconnects.  Its endpoint id must be pruned from A's relations.
+        {
+            let client = clients.0.clients.get(&b_key).unwrap();
+            client.active.start_shutdown();
+        }
+        tokio::time::timeout(Duration::from_secs(1), {
+            let clients = clients.clone();
+            async move {
+                while clients.0.clients.contains_key(&b_key) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        })
+        .await
+        .std_context("timeout waiting for B to unregister")?;
+
+        assert_relations_clean(&clients);
+        // A stays connected to C, so A's entry survives but must no longer name B.
+        // The guard is scoped: holding it across the await below would deadlock the
+        // actor's `sent_to` write on this single-threaded test runtime.
+        {
+            let a_sent_to = clients.0.sent_to.get(&a_key).unwrap();
+            assert!(!a_sent_to.value().contains(&b_key));
+            assert!(a_sent_to.value().contains(&c_key));
+        }
+
+        // After A disconnects too, no relation entries must remain at all.
+        {
+            let client = clients.0.clients.get(&a_key).unwrap();
+            client.active.start_shutdown();
+        }
+        tokio::time::timeout(Duration::from_secs(1), {
+            let clients = clients.clone();
+            async move {
+                while clients.0.clients.contains_key(&a_key) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        })
+        .await
+        .std_context("timeout waiting for A to unregister")?;
+
+        assert_relations_clean(&clients);
+        assert!(clients.0.sent_to.get(&a_key).is_none());
 
         clients.shutdown().await;
         Ok(())
