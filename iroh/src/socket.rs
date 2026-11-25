@@ -1766,6 +1766,12 @@ impl Actor {
     fn re_stun(&mut self, why: UpdateReason) {
         let state = self.local_interfaces_watcher.get();
 
+        if self.sock.relay_map.is_empty() {
+            // Reports don't run if rleays aren't available, so inject a default one.
+            self.transports_network_change
+                .on_network_change(&net_report::Report::default());
+        }
+
         // This block is a band-aid for https://github.com/n0-computer/iroh/issues/4588
         // See patchbay test `lan_switch_advertises_new_addr_without_relay`
         #[cfg(not(wasm_browser))]
@@ -1977,8 +1983,12 @@ impl Actor {
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
         if let Some(ref mut r) = report {
             self.sock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
+            let relay_map = &self.sock.relay_map;
+            // A report that started before a relay was removed can still prefer that relay.
+            r.preferred_relay.take_if(|url| !relay_map.contains(url));
             if r.preferred_relay.is_none()
                 && let Some(my_relay) = self.sock.my_relay()
+                && relay_map.contains(&my_relay)
             {
                 r.preferred_relay.replace(my_relay);
             }

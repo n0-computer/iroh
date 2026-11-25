@@ -1298,16 +1298,17 @@ impl RelayActor {
             self.config
                 .my_relay
                 .set(relay_url.clone(), RelayConnectionState::Connecting);
-            self.set_home_relay(relay_url).await;
+            self.set_home_relay(Some(relay_url)).await;
         } else {
             self.config.my_relay.clear();
+            self.set_home_relay(None).await;
         }
     }
 
-    async fn set_home_relay(&mut self, home_url: RelayUrl) {
-        let home_url_ref = &home_url;
+    async fn set_home_relay(&mut self, home_url: Option<RelayUrl>) {
+        let home_url_ref = home_url.as_ref();
         n0_future::join_all(self.active_relays.iter().map(|(url, handle)| async move {
-            let is_preferred = url == home_url_ref;
+            let is_preferred = Some(url) == home_url_ref;
             handle
                 .inbox_addr
                 .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
@@ -1316,7 +1317,9 @@ impl RelayActor {
         }))
         .await;
         // Ensure we have an ActiveRelayActor for the current home relay.
-        self.active_relay_handle(home_url);
+        if let Some(home_url) = home_url {
+            self.active_relay_handle(home_url);
+        }
     }
 
     /// Returns the handle for the [`ActiveRelayActor`] to reach `remote_endpoint`.
@@ -1573,9 +1576,10 @@ mod tests {
     use tracing::{Instrument, info, info_span};
 
     use super::{
-        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        Config, RELAY_INACTIVE_CLEANUP_TIME, RelayActor, RelayActorMessage, RelayConnectionOptions,
-        RelayMap, RelayRecvDatagram, RelaySendItem, UNDELIVERABLE_DATAGRAM_TIMEOUT,
+        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayHandle, ActiveRelayMessage,
+        ActiveRelayPrioMessage, Config, RELAY_INACTIVE_CLEANUP_TIME, RelayActor, RelayActorMessage,
+        RelayConnectionOptions, RelayMap, RelayRecvDatagram, RelaySendItem, Report,
+        UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
     use crate::{dns::DnsResolver, metrics::SocketMetrics, test_utils};
 
@@ -1608,6 +1612,54 @@ mod tests {
 
         assert!(actor.active_relay_tasks.is_empty());
         assert!(logs_contain("ActiveRelayActor cancelled"));
+    }
+
+    #[tokio::test]
+    async fn no_preferred_relay_demotes_home_relay() {
+        let (relay_datagram_recv_queue, _recv_rx) = mpsc::channel(1);
+        let config = Config {
+            my_relay: Default::default(),
+            secret_key: SecretKey::from_bytes(&[0u8; 32]),
+            dns_resolver: DnsResolver::new(),
+            proxy_url: None,
+            ipv6_reported: Arc::new(AtomicBool::new(false)),
+            tls_config: CaTlsConfig::insecure_skip_verify()
+                .client_config(default_provider())
+                .expect("infallible"),
+            metrics: Default::default(),
+            relay_map: RelayMap::empty(),
+        };
+        let mut actor =
+            RelayActor::new(config, relay_datagram_recv_queue, CancellationToken::new());
+        let url: RelayUrl = "https://relay.invalid".parse().unwrap();
+        let (prio_inbox_addr, _prio_inbox_rx) = mpsc::channel(1);
+        let (inbox_addr, mut inbox_rx) = mpsc::channel(1);
+        let (datagrams_send_queue, _datagrams_send_rx) = mpsc::channel(1);
+        let handle = ActiveRelayHandle {
+            prio_inbox_addr,
+            inbox_addr,
+            datagrams_send_queue,
+        };
+        actor.active_relays.insert(url.clone(), handle);
+
+        let report = Report {
+            preferred_relay: Some(url),
+            ..Default::default()
+        };
+        actor.on_network_change(report).await;
+        let msg = inbox_rx.try_recv();
+        assert!(
+            matches!(msg, Ok(ActiveRelayMessage::SetHomeRelay(true))),
+            "{msg:?}"
+        );
+
+        actor.on_network_change(Report::default()).await;
+        assert_eq!(actor.config.my_relay.get(), None);
+        let msg = inbox_rx.try_recv();
+        assert!(
+            matches!(msg, Ok(ActiveRelayMessage::SetHomeRelay(false))),
+            "{msg:?}"
+        );
     }
 
     /// Starts a new [`ActiveRelayActor`].
