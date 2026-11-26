@@ -7,6 +7,8 @@ use std::{
 use bytes::Bytes;
 use iroh_base::{EndpointId, RelayUrl};
 use iroh_relay::protos::relay::Datagrams;
+#[cfg(not(wasm_browser))]
+use iroh_relay::socket::ConfigureSocket;
 use n0_future::{
     ready,
     task::{self, AbortOnDropHandle},
@@ -50,7 +52,21 @@ impl std::fmt::Display for RelayTransport {
 }
 
 impl RelayTransport {
-    pub(crate) fn new(config: RelayActorConfig, cancel_token: CancellationToken) -> Self {
+    #[cfg(test)]
+    fn new(config: RelayActorConfig, cancel_token: CancellationToken) -> Self {
+        Self::new_with_configure_socket(
+            config,
+            cancel_token,
+            #[cfg(not(wasm_browser))]
+            None,
+        )
+    }
+
+    pub(crate) fn new_with_configure_socket(
+        config: RelayActorConfig,
+        cancel_token: CancellationToken,
+        #[cfg(not(wasm_browser))] configure_socket: Option<ConfigureSocket>,
+    ) -> Self {
         let (relay_datagram_send_tx, relay_datagram_send_rx) = mpsc::channel(256);
 
         let (relay_datagram_recv_tx, relay_datagram_recv_rx) = mpsc::channel(512);
@@ -61,6 +77,8 @@ impl RelayTransport {
         let my_relay = config.my_relay.clone();
 
         let relay_actor = RelayActor::new(config, relay_datagram_recv_tx, cancel_token);
+        #[cfg(not(wasm_browser))]
+        let relay_actor = relay_actor.with_configure_socket(configure_socket);
 
         let actor_handle = AbortOnDropHandle::new(task::spawn(
             async move {

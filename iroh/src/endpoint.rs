@@ -16,6 +16,8 @@ use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 #[cfg(not(wasm_browser))]
 use ipnet::{Ipv4Net, Ipv6Net};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+#[cfg(not(wasm_browser))]
+pub use iroh_relay::socket::{ConfigureSocket, SocketRef, SocketTarget};
 use iroh_relay::{RelayConfig, RelayMap, tls::CaTlsConfig};
 #[cfg(not(wasm_browser))]
 use n0_error::bail;
@@ -127,7 +129,7 @@ pub use crate::{net_report::NetReportConfig, portmapper::PortmapperConfig};
 /// new [`EndpointId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
     alpn_protocols: Vec<Vec<u8>>,
@@ -150,6 +152,9 @@ pub struct Builder {
     net_report_config: NetReportConfig,
     crypto_provider: Option<Arc<rustls::crypto::CryptoProvider>>,
     configured_addrs: BTreeSet<SocketAddr>,
+    #[cfg(not(wasm_browser))]
+    #[debug(skip)]
+    configure_socket: Option<ConfigureSocket>,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -218,6 +223,8 @@ impl Builder {
             net_report_config: Default::default(),
             crypto_provider: None,
             configured_addrs: Default::default(),
+            #[cfg(not(wasm_browser))]
+            configure_socket: None,
         }
     }
 
@@ -284,6 +291,8 @@ impl Builder {
             net_report_config: self.net_report_config,
             static_config,
             configured_addrs: self.configured_addrs,
+            #[cfg(not(wasm_browser))]
+            configure_socket: self.configure_socket,
         };
 
         let inner = socket::EndpointInner::bind(sock_opts)
@@ -515,6 +524,43 @@ impl Builder {
     pub fn clear_relay_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
+        self
+    }
+
+    /// Sets a hook for UDP transport sockets and relay connections.
+    ///
+    /// The hook runs before each bind or connect, including UDP rebinds.
+    /// [`SocketTarget`] identifies the socket's purpose and address family.
+    /// DNS lookup sockets are managed by [`DnsResolver`] and are not covered.
+    ///
+    /// Use it to set `SO_MARK` or `SO_BINDTODEVICE` on Linux, or `IP_BOUND_IF`
+    /// on Apple platforms. On Windows, `IP_UNICAST_IF` selects an outgoing IPv4
+    /// interface and `IPV6_UNICAST_IF` selects an outgoing IPv6 interface;
+    /// both take an interface index. The target identifies the family.
+    ///
+    /// An error from the hook fails the bind or dial.
+    ///
+    /// ```no_run
+    /// # async fn wrapper() -> n0_error::Result<()> {
+    /// use iroh::{Endpoint, endpoint::{presets, SocketTarget}};
+    ///
+    /// let ep = Endpoint::builder(presets::N0)
+    ///     .configure_socket(std::sync::Arc::new(|socket, target| {
+    ///         let size = match target {
+    ///             SocketTarget::UdpBind(_) => 1 << 20,
+    ///             SocketTarget::RelayConnect(_) => 1 << 16,
+    ///         };
+    ///         socket2::SockRef::from(&socket).set_recv_buffer_size(size)
+    ///     }))
+    ///     .bind()
+    ///     .await?;
+    /// # ep.close().await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(not(wasm_browser))]
+    pub fn configure_socket(mut self, configure: ConfigureSocket) -> Self {
+        self.configure_socket = Some(configure);
         self
     }
 
@@ -2093,7 +2139,7 @@ mod tests {
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, error_span, info, info_span, instrument};
 
-    use super::Endpoint;
+    use super::{Endpoint, SocketTarget};
     use crate::{
         RelayMap, RelayMode,
         address_lookup::memory::MemoryLookup,
@@ -2148,6 +2194,48 @@ mod tests {
             }
         );
 
+        Ok(())
+    }
+
+    /// The hook reaches UDP transport sockets and relay connections.
+    #[tokio::test]
+    #[traced_test]
+    async fn configure_socket_hook_reaches_udp_and_relay_sockets() -> Result {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
+
+        let udp_calls = Arc::new(AtomicUsize::new(0));
+        let tcp_calls = Arc::new(AtomicUsize::new(0));
+        let (udp, tcp) = (udp_calls.clone(), tcp_calls.clone());
+
+        let ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+            .configure_socket(Arc::new(move |socket, target| {
+                match target {
+                    SocketTarget::UdpBind(_) => udp.fetch_add(1, Ordering::SeqCst),
+                    SocketTarget::RelayConnect(_) => tcp.fetch_add(1, Ordering::SeqCst),
+                };
+                socket2::SockRef::from(&socket).set_recv_buffer_size(1 << 20)?;
+                Ok(())
+            }))
+            .bind()
+            .await?;
+
+        // `online()` resolves once the endpoint has a home relay, which means the
+        // relay connection has been dialed.
+        ep.online().await;
+
+        assert!(
+            udp_calls.load(Ordering::SeqCst) > 0,
+            "hook never ran on a UDP transport socket"
+        );
+        assert!(
+            tcp_calls.load(Ordering::SeqCst) > 0,
+            "hook never ran on the relay's TCP socket"
+        );
+        ep.close().await;
         Ok(())
     }
 

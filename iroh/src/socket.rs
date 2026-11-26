@@ -26,6 +26,8 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+#[cfg(not(wasm_browser))]
+use iroh_relay::socket::ConfigureSocket;
 use iroh_relay::{RelayConfig, RelayMap};
 use mapped_addrs::MultipathMappedAddr;
 use n0_error::{AnyError, anyerr, bail, e, stack_error};
@@ -196,6 +198,16 @@ pub(crate) struct Options {
 
     /// Explicitly configured external addresses to advertise.
     pub(crate) configured_addrs: BTreeSet<SocketAddr>,
+
+    /// Optional hook run on every socket the endpoint opens, before bind or
+    /// connect and again on rebind.
+    ///
+    /// Lets the caller decide how iroh's own traffic is routed, for example to
+    /// keep it off a full-tunnel default route. See
+    /// [`crate::endpoint::Builder::configure_socket`].
+    #[cfg(not(wasm_browser))]
+    #[debug(skip)]
+    pub(crate) configure_socket: Option<ConfigureSocket>,
 }
 
 /// Inner state for an iroh [`crate::Endpoint`].
@@ -889,6 +901,8 @@ impl EndpointInner {
             net_report_config,
             static_config,
             configured_addrs,
+            #[cfg(not(wasm_browser))]
+            configure_socket,
         } = opts;
 
         let address_lookup =
@@ -939,6 +953,8 @@ impl EndpointInner {
             relay_actor_config,
             &metrics,
             shutdown_token.child_token(),
+            #[cfg(not(wasm_browser))]
+            configure_socket.clone(),
         )
         .map_err(|err| e!(BindError::Sockets, err))?;
 
@@ -2207,6 +2223,8 @@ mod tests {
             net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
+            #[cfg(not(wasm_browser))]
+            configure_socket: None,
         }
     }
 
@@ -2623,6 +2641,8 @@ mod tests {
             net_report_config: Default::default(),
             static_config,
             configured_addrs: Default::default(),
+            #[cfg(not(wasm_browser))]
+            configure_socket: None,
         };
         let sock = EndpointInner::bind(opts).await?;
         Ok(sock)
