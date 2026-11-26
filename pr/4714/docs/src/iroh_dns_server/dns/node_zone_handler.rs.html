@@ -182,40 +182,44 @@
 <a href=#182 id=182 data-nosnippet>182</a>    ) -&gt; LookupControlFlow&lt;AuthLookup&gt; {
 <a href=#183 id=183 data-nosnippet>183</a>        LookupControlFlow::Skip
 <a href=#184 id=184 data-nosnippet>184</a>    }
-<a href=#185 id=185 data-nosnippet>185</a>}
-<a href=#186 id=186 data-nosnippet>186</a>
-<a href=#187 id=187 data-nosnippet>187</a><span class="kw">fn </span>parse_name_as_pkarr_with_origin(
-<a href=#188 id=188 data-nosnippet>188</a>    name: <span class="kw">impl </span>Into&lt;Name&gt;,
-<a href=#189 id=189 data-nosnippet>189</a>    allowed_origins: <span class="kw-2">&amp;</span>[Name],
-<a href=#190 id=190 data-nosnippet>190</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Name, PublicKeyBytes, Name)&gt; {
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">let </span>name = name.into();
-<a href=#192 id=192 data-nosnippet>192</a>    <span class="macro">trace!</span>(<span class="string">"resolve {name}"</span>);
-<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">for </span>origin <span class="kw">in </span>allowed_origins.iter() {
-<a href=#194 id=194 data-nosnippet>194</a>        <span class="macro">trace!</span>(<span class="string">"try {origin}"</span>);
-<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">if </span>!origin.zone_of(<span class="kw-2">&amp;</span>name) {
-<a href=#196 id=196 data-nosnippet>196</a>            <span class="kw">continue</span>;
-<a href=#197 id=197 data-nosnippet>197</a>        }
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">if </span>name.num_labels() &lt; origin.num_labels() + <span class="number">1 </span>{
-<a href=#199 id=199 data-nosnippet>199</a>            <span class="macro">bail_any!</span>(<span class="string">"not a valid pkarr name: missing pubkey"</span>);
-<a href=#200 id=200 data-nosnippet>200</a>        }
-<a href=#201 id=201 data-nosnippet>201</a>        <span class="macro">trace!</span>(<span class="string">"parse {origin}"</span>);
-<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">let </span>labels = name.iter().rev();
-<a href=#203 id=203 data-nosnippet>203</a>        <span class="kw">let </span><span class="kw-2">mut </span>labels_without_origin = labels.skip(origin.num_labels() <span class="kw">as </span>usize);
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">let </span>pkey_label = labels_without_origin.next().expect(<span class="string">"length checked above"</span>);
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">let </span>pkey_str = std::str::from_utf8(pkey_label).anyerr()<span class="question-mark">?</span>;
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span>pkey =
-<a href=#207 id=207 data-nosnippet>207</a>            PublicKeyBytes::from_z32(pkey_str).context(<span class="string">"not a valid pkarr name: invalid pubkey"</span>)<span class="question-mark">?</span>;
-<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>remaining_name = Name::from_labels(labels_without_origin.rev()).anyerr()<span class="question-mark">?</span>;
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((remaining_name, pkey, origin.clone()));
-<a href=#210 id=210 data-nosnippet>210</a>    }
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="macro">bail_any!</span>(<span class="string">"name does not match any allowed origin"</span>);
-<a href=#212 id=212 data-nosnippet>212</a>}
-<a href=#213 id=213 data-nosnippet>213</a>
-<a href=#214 id=214 data-nosnippet>214</a><span class="kw">fn </span>err_refused(e: <span class="kw">impl </span>fmt::Debug) -&gt; LookupError {
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="macro">trace!</span>(<span class="string">"lookup failed (refused): {e:?}"</span>);
-<a href=#216 id=216 data-nosnippet>216</a>    LookupError::from(ResponseCode::Refused)
-<a href=#217 id=217 data-nosnippet>217</a>}
-<a href=#218 id=218 data-nosnippet>218</a><span class="kw">fn </span>err_nx_domain(e: <span class="kw">impl </span>fmt::Debug) -&gt; LookupError {
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="macro">trace!</span>(<span class="string">"lookup failed (nxdomain): {e:?}"</span>);
-<a href=#220 id=220 data-nosnippet>220</a>    LookupError::from(ResponseCode::NXDomain)
-<a href=#221 id=221 data-nosnippet>221</a>}</code></pre></div></section></main></body></html>
+<a href=#185 id=185 data-nosnippet>185</a>
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">fn </span>metrics_label(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
+<a href=#187 id=187 data-nosnippet>187</a>        <span class="string">""
+<a href=#188 id=188 data-nosnippet>188</a>    </span>}
+<a href=#189 id=189 data-nosnippet>189</a>}
+<a href=#190 id=190 data-nosnippet>190</a>
+<a href=#191 id=191 data-nosnippet>191</a><span class="kw">fn </span>parse_name_as_pkarr_with_origin(
+<a href=#192 id=192 data-nosnippet>192</a>    name: <span class="kw">impl </span>Into&lt;Name&gt;,
+<a href=#193 id=193 data-nosnippet>193</a>    allowed_origins: <span class="kw-2">&amp;</span>[Name],
+<a href=#194 id=194 data-nosnippet>194</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Name, PublicKeyBytes, Name)&gt; {
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span>name = name.into();
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="macro">trace!</span>(<span class="string">"resolve {name}"</span>);
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">for </span>origin <span class="kw">in </span>allowed_origins.iter() {
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="macro">trace!</span>(<span class="string">"try {origin}"</span>);
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">if </span>!origin.zone_of(<span class="kw-2">&amp;</span>name) {
+<a href=#200 id=200 data-nosnippet>200</a>            <span class="kw">continue</span>;
+<a href=#201 id=201 data-nosnippet>201</a>        }
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">if </span>name.num_labels() &lt; origin.num_labels() + <span class="number">1 </span>{
+<a href=#203 id=203 data-nosnippet>203</a>            <span class="macro">bail_any!</span>(<span class="string">"not a valid pkarr name: missing pubkey"</span>);
+<a href=#204 id=204 data-nosnippet>204</a>        }
+<a href=#205 id=205 data-nosnippet>205</a>        <span class="macro">trace!</span>(<span class="string">"parse {origin}"</span>);
+<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">let </span>labels = name.iter().rev();
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">let </span><span class="kw-2">mut </span>labels_without_origin = labels.skip(origin.num_labels() <span class="kw">as </span>usize);
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>pkey_label = labels_without_origin.next().expect(<span class="string">"length checked above"</span>);
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>pkey_str = std::str::from_utf8(pkey_label).anyerr()<span class="question-mark">?</span>;
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span>pkey =
+<a href=#211 id=211 data-nosnippet>211</a>            PublicKeyBytes::from_z32(pkey_str).context(<span class="string">"not a valid pkarr name: invalid pubkey"</span>)<span class="question-mark">?</span>;
+<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>remaining_name = Name::from_labels(labels_without_origin.rev()).anyerr()<span class="question-mark">?</span>;
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((remaining_name, pkey, origin.clone()));
+<a href=#214 id=214 data-nosnippet>214</a>    }
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="macro">bail_any!</span>(<span class="string">"name does not match any allowed origin"</span>);
+<a href=#216 id=216 data-nosnippet>216</a>}
+<a href=#217 id=217 data-nosnippet>217</a>
+<a href=#218 id=218 data-nosnippet>218</a><span class="kw">fn </span>err_refused(e: <span class="kw">impl </span>fmt::Debug) -&gt; LookupError {
+<a href=#219 id=219 data-nosnippet>219</a>    <span class="macro">trace!</span>(<span class="string">"lookup failed (refused): {e:?}"</span>);
+<a href=#220 id=220 data-nosnippet>220</a>    LookupError::from(ResponseCode::Refused)
+<a href=#221 id=221 data-nosnippet>221</a>}
+<a href=#222 id=222 data-nosnippet>222</a><span class="kw">fn </span>err_nx_domain(e: <span class="kw">impl </span>fmt::Debug) -&gt; LookupError {
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="macro">trace!</span>(<span class="string">"lookup failed (nxdomain): {e:?}"</span>);
+<a href=#224 id=224 data-nosnippet>224</a>    LookupError::from(ResponseCode::NXDomain)
+<a href=#225 id=225 data-nosnippet>225</a>}</code></pre></div></section></main></body></html>
