@@ -1,44 +1,40 @@
 //! Implementation of a DNS name server for iroh endpoint announces
 
 use std::{
-    collections::BTreeMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
 
-use async_trait::async_trait;
-use bytes::Bytes;
-use hickory_server::{
-    net::{NetError, runtime::TokioTime, xfer::Protocol},
-    proto::{
-        self,
-        op::ResponseCode,
-        rr::{
-            LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
-            rdata::{self},
-        },
-    },
-    server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
-    store::in_memory::InMemoryZoneHandler,
-    zone_handler::{AxfrPolicy, Catalog, MessageResponse, ZoneType},
-};
-use n0_error::{Result, StdResultExt, anyerr};
+use n0_error::{Result, StdResultExt};
 use serde::{Deserialize, Serialize};
+use simple_dns::RCODE;
 use tokio::{
-    net::{TcpListener, UdpSocket},
-    sync::broadcast,
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream, UdpSocket},
+    sync::Semaphore,
+    task::JoinSet,
 };
-use tracing::{debug, info};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::{debug, info, warn};
 
-use self::node_zone_handler::NodeZoneHandler;
+use self::{
+    authority::Authority,
+    message::{EDNS_UDP_PAYLOAD, PLAIN_UDP_PAYLOAD, Request, Response, parse_request},
+};
 use crate::{metrics::Metrics, store::ZoneStore};
 
-mod node_zone_handler;
+mod authority;
+pub(crate) mod message;
 
-const DEFAULT_NS_TTL: u32 = 60 * 60 * 12; // 12h
-const DEFAULT_SOA_TTL: u32 = 60 * 60 * 24 * 14; // 14d
-const DEFAULT_A_TTL: u32 = 60 * 60; // 1h
+/// Time a TCP connection may stay idle, and the limit for reading or writing one message.
+const TCP_TIMEOUT: Duration = Duration::from_millis(1000);
+/// Maximum number of concurrently open TCP connections.
+const MAX_TCP_CONNECTIONS: usize = 512;
+/// Maximum number of UDP queries answered concurrently. Further queries are dropped.
+const MAX_UDP_IN_FLIGHT: usize = 1024;
+/// Receive buffer size for UDP queries. Larger datagrams are truncated and rejected.
+const UDP_RECV_BUFFER: usize = 4096;
 
 /// Configuration for the DNS listener.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -85,41 +81,58 @@ impl DnsConfig {
     }
 }
 
+/// The transport a DNS request arrived on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub(crate) enum Protocol {
+    #[display("udp")]
+    Udp,
+    #[display("tcp")]
+    Tcp,
+    #[display("https")]
+    Https,
+}
+
 /// A DNS server that serves pkarr signed packets.
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub(crate) struct DnsServer {
     local_addr: SocketAddr,
-    #[debug("hickory_server::Server<DnsHandler>")]
-    server: hickory_server::Server<DnsHandler>,
+    cancel: CancellationToken,
+    /// Per-query and per-connection tasks.
+    tasks: TaskTracker,
+    /// The UDP receive loop and the TCP accept loop.
+    listeners: JoinSet<Result<()>>,
 }
 
 impl DnsServer {
     /// Spawn the server.
     pub(crate) async fn spawn(config: DnsConfig, dns_handler: DnsHandler) -> Result<Self> {
-        const TCP_TIMEOUT: Duration = Duration::from_millis(1000);
-        let mut server = hickory_server::Server::new(dns_handler);
-
         let bind_addr = SocketAddr::new(
             config.bind_addr.unwrap_or(Ipv6Addr::UNSPECIFIED.into()),
             config.port,
         );
 
         let socket = UdpSocket::bind(bind_addr).await.anyerr()?;
+        let local_addr = socket.local_addr().anyerr()?;
+        // Bind TCP to the port UDP got, which matters when binding to port 0.
+        let tcp = TcpListener::bind(local_addr).await.anyerr()?;
+        info!("DNS server listening on {}", local_addr);
 
-        let socket_addr = socket.local_addr().anyerr()?;
-
-        const TCP_RESPONSE_BUFFER: usize = 64 * 1024;
-        server.register_socket(socket);
-        server.register_listener(
-            TcpListener::bind(bind_addr).await.anyerr()?,
-            TCP_TIMEOUT,
-            TCP_RESPONSE_BUFFER,
-        );
-        info!("DNS server listening on {}", bind_addr);
+        let cancel = CancellationToken::new();
+        let tasks = TaskTracker::new();
+        let mut listeners = JoinSet::new();
+        listeners.spawn(run_udp(
+            Arc::new(socket),
+            dns_handler.clone(),
+            tasks.clone(),
+            cancel.clone(),
+        ));
+        listeners.spawn(run_tcp(tcp, dns_handler, tasks.clone(), cancel.clone()));
 
         Ok(Self {
-            server,
-            local_addr: socket_addr,
+            local_addr,
+            cancel,
+            tasks,
+            listeners,
         })
     }
 
@@ -130,183 +143,224 @@ impl DnsServer {
 
     /// Shutdown the server an wait for all tasks to complete.
     pub(crate) async fn shutdown(mut self) -> Result<()> {
-        self.server.shutdown_gracefully().await.anyerr()?;
-        Ok(())
+        self.cancel.cancel();
+        let res = self.join_listeners().await;
+        self.tasks.close();
+        self.tasks.wait().await;
+        res
     }
 
     /// Wait for all tasks to complete.
     ///
     /// Runs forever unless tasks fail.
     pub(crate) async fn run_until_done(mut self) -> Result<()> {
-        self.server.block_until_done().await.anyerr()?;
-        Ok(())
+        let res = self.join_listeners().await;
+        self.cancel.cancel();
+        self.tasks.close();
+        self.tasks.wait().await;
+        res
+    }
+
+    /// Waits for both listener loops, returning the first error.
+    async fn join_listeners(&mut self) -> Result<()> {
+        let mut res = Ok(());
+        while let Some(joined) = self.listeners.join_next().await {
+            let outcome = joined.anyerr().and_then(|r| r);
+            if let Err(err) = outcome {
+                self.cancel.cancel();
+                if res.is_ok() {
+                    res = Err(err);
+                }
+            }
+        }
+        res
+    }
+}
+
+async fn run_udp(
+    socket: Arc<UdpSocket>,
+    handler: DnsHandler,
+    tasks: TaskTracker,
+    cancel: CancellationToken,
+) -> Result<()> {
+    let in_flight = Arc::new(Semaphore::new(MAX_UDP_IN_FLIGHT));
+    let mut buf = vec![0u8; UDP_RECV_BUFFER];
+    loop {
+        let (len, peer) = tokio::select! {
+            _ = cancel.cancelled() => return Ok(()),
+            res = socket.recv_from(&mut buf) => match res {
+                Ok(res) => res,
+                Err(err) => {
+                    // Errors such as ICMP port unreachable are reported on some platforms.
+                    debug!("UDP receive failed: {err:#}");
+                    continue;
+                }
+            },
+        };
+        let Ok(permit) = in_flight.clone().try_acquire_owned() else {
+            debug!(%peer, "dropping UDP query: too many in flight");
+            continue;
+        };
+        let query = buf[..len].to_vec();
+        let socket = socket.clone();
+        let handler = handler.clone();
+        tasks.spawn(async move {
+            let _permit = permit;
+            if let Some(response) = handler.answer_bytes(&query, Protocol::Udp).await
+                && let Err(err) = socket.send_to(&response, peer).await
+            {
+                debug!(%peer, "UDP send failed: {err:#}");
+            }
+        });
+    }
+}
+
+async fn run_tcp(
+    listener: TcpListener,
+    handler: DnsHandler,
+    tasks: TaskTracker,
+    cancel: CancellationToken,
+) -> Result<()> {
+    let connections = Arc::new(Semaphore::new(MAX_TCP_CONNECTIONS));
+    loop {
+        let (stream, peer) = tokio::select! {
+            _ = cancel.cancelled() => return Ok(()),
+            res = listener.accept() => match res {
+                Ok(res) => res,
+                Err(err) => {
+                    // Accept fails transiently, e.g. when out of file descriptors.
+                    warn!("TCP accept failed: {err:#}");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+            },
+        };
+        let Ok(permit) = connections.clone().try_acquire_owned() else {
+            debug!(%peer, "dropping TCP connection: too many open");
+            continue;
+        };
+        let handler = handler.clone();
+        let cancel = cancel.clone();
+        tasks.spawn(async move {
+            let _permit = permit;
+            tokio::select! {
+                _ = cancel.cancelled() => {}
+                res = serve_tcp(stream, &handler) => {
+                    if let Err(err) = res {
+                        debug!(%peer, "TCP connection closed: {err:#}");
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// Serves length-prefixed DNS messages on a TCP connection (RFC 7766).
+///
+/// The connection is closed when idle for [`TCP_TIMEOUT`], or when reading or writing a
+/// single message takes longer than that.
+async fn serve_tcp(mut stream: TcpStream, handler: &DnsHandler) -> Result<()> {
+    loop {
+        let len = match tokio::time::timeout(TCP_TIMEOUT, stream.read_u16()).await {
+            Err(_elapsed) => return Ok(()),
+            Ok(Err(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
+            Ok(res) => res.anyerr()?,
+        };
+        let mut query = vec![0u8; len as usize];
+        tokio::time::timeout(TCP_TIMEOUT, stream.read_exact(&mut query))
+            .await
+            .anyerr()?
+            .anyerr()?;
+        let Some(response) = handler.answer_bytes(&query, Protocol::Tcp).await else {
+            continue;
+        };
+        let Ok(response_len) = u16::try_from(response.len()) else {
+            warn!("dropping oversized TCP response");
+            continue;
+        };
+        let mut framed = Vec::with_capacity(2 + response.len());
+        framed.extend_from_slice(&response_len.to_be_bytes());
+        framed.extend_from_slice(&response);
+        tokio::time::timeout(TCP_TIMEOUT, stream.write_all(&framed))
+            .await
+            .anyerr()?
+            .anyerr()?;
     }
 }
 
 /// State for serving DNS
 #[derive(Clone, derive_more::Debug)]
 pub(crate) struct DnsHandler {
-    #[debug("Catalog")]
-    catalog: Arc<Catalog>,
+    authority: Arc<Authority>,
+    #[debug("metrics")]
     metrics: Arc<Metrics>,
 }
 
 impl DnsHandler {
-    /// Create a DNS server given some settings, a connection to the DB for DID-by-username lookups
-    /// and the server DID to serve under `_did.<origin>`.
+    /// Create a DNS handler for the configured origins, answering from `zone_store`.
     pub(crate) fn new(
         zone_store: ZoneStore,
         config: &DnsConfig,
         metrics: Arc<Metrics>,
     ) -> Result<Self> {
-        let origins = config
-            .origins
-            .iter()
-            .map(Name::from_utf8)
-            .collect::<Result<Vec<_>, _>>()
-            .anyerr()?;
-
-        let (static_authority, serial) = create_static_authority(&origins, config)?;
-        let authority = Arc::new(NodeZoneHandler::new(
-            zone_store,
-            static_authority,
-            origins,
-            serial,
-        )?);
-
-        let mut catalog = Catalog::new();
-        for origin in authority.origins() {
-            catalog.upsert(LowerName::from(origin), vec![authority.clone()]);
-        }
-
         Ok(Self {
-            catalog: Arc::new(catalog),
+            authority: Arc::new(Authority::new(zone_store, config)?),
             metrics,
         })
     }
 
-    /// Handle a DNS request
-    pub(crate) async fn answer_request(&self, request: Request) -> Result<Bytes> {
-        let (tx, mut rx) = broadcast::channel(1);
-        let response_handle = Handle(tx);
-        self.handle_request::<_, TokioTime>(&request, response_handle)
-            .await;
-        rx.recv().await.anyerr()
+    /// Answers a wire-format DNS message, returning the encoded response.
+    ///
+    /// Returns `None` for messages that must not be answered.
+    pub(crate) async fn answer_bytes(&self, message: &[u8], protocol: Protocol) -> Option<Vec<u8>> {
+        let (response, max_len) = self.answer(message, protocol).await?;
+        Some(response.encode(max_len))
     }
-}
 
-#[async_trait::async_trait]
-impl RequestHandler for DnsHandler {
-    async fn handle_request<R: ResponseHandler, T: hickory_server::net::runtime::Time>(
+    /// Answers a wire-format DNS message.
+    ///
+    /// Returns `None` for messages that must not be answered, and otherwise the response
+    /// along with the maximum length it may be encoded to.
+    pub(crate) async fn answer(
         &self,
-        request: &Request,
-        response_handle: R,
-    ) -> ResponseInfo {
+        message: &[u8],
+        protocol: Protocol,
+    ) -> Option<(Response, usize)> {
+        let query = match parse_request(message) {
+            Request::Ignore => return None,
+            Request::Reject(response) => {
+                self.metrics.dns_requests.inc();
+                self.metrics.dns_lookup_error.inc();
+                return Some((response, PLAIN_UDP_PAYLOAD as usize));
+            }
+            Request::Query(query) => query,
+        };
         self.metrics.dns_requests.inc();
-        match request.protocol() {
-            Protocol::Udp => {
-                self.metrics.dns_requests_udp.inc();
-            }
-            Protocol::Https => {
-                self.metrics.dns_requests_https.inc();
-            }
-            _ => {}
-        }
-        debug!(protocol=%request.protocol(), queries=?request.queries, "incoming DNS request");
+        match protocol {
+            Protocol::Udp => self.metrics.dns_requests_udp.inc(),
+            Protocol::Https => self.metrics.dns_requests_https.inc(),
+            Protocol::Tcp => 0,
+        };
+        debug!(%protocol, question=?query.question, "incoming DNS request");
 
-        let res = self
-            .catalog
-            .handle_request::<_, T>(request, response_handle)
-            .await;
-        match res.response_code {
-            ResponseCode::NoError => match res.counts().answers {
-                0 => self.metrics.dns_lookup_notfound.inc(),
-                _ => self.metrics.dns_lookup_success.inc(),
-            },
-            ResponseCode::NXDomain => self.metrics.dns_lookup_notfound.inc(),
+        let max_len = match protocol {
+            Protocol::Udp => query
+                .edns
+                .map(|edns| edns.udp_payload.clamp(PLAIN_UDP_PAYLOAD, EDNS_UDP_PAYLOAD))
+                .unwrap_or(PLAIN_UDP_PAYLOAD) as usize,
+            Protocol::Tcp | Protocol::Https => u16::MAX as usize,
+        };
+
+        let response = match query.edns {
+            Some(edns) if edns.version != 0 => query.response(RCODE::BADVERS),
+            _ => self.authority.answer(&query).await,
+        };
+        match response.rcode {
+            RCODE::NoError if response.answers.is_empty() => self.metrics.dns_lookup_notfound.inc(),
+            RCODE::NoError => self.metrics.dns_lookup_success.inc(),
+            RCODE::NameError => self.metrics.dns_lookup_notfound.inc(),
             _ => self.metrics.dns_lookup_error.inc(),
         };
-        res
+        Some((response, max_len))
     }
-}
-
-/// A handle to the channel over which the response to a DNS request will be sent
-#[derive(Debug, Clone)]
-pub(crate) struct Handle(pub broadcast::Sender<Bytes>);
-
-#[async_trait]
-impl ResponseHandler for Handle {
-    async fn send_response<'a>(
-        &mut self,
-        response: MessageResponse<
-            '_,
-            'a,
-            impl Iterator<Item = &'a proto::rr::Record> + Send + 'a,
-            impl Iterator<Item = &'a proto::rr::Record> + Send + 'a,
-            impl Iterator<Item = &'a proto::rr::Record> + Send + 'a,
-            impl Iterator<Item = &'a proto::rr::Record> + Send + 'a,
-        >,
-    ) -> Result<ResponseInfo, NetError> {
-        let mut bytes = Vec::with_capacity(512);
-        let info = {
-            let mut encoder = proto::serialize::binary::BinEncoder::new(&mut bytes);
-            response.destructive_emit(&mut encoder)?
-        };
-        self.0.send(Bytes::from(bytes)).unwrap();
-        Ok(info)
-    }
-}
-
-fn create_static_authority(
-    origins: &[Name],
-    config: &DnsConfig,
-) -> Result<(InMemoryZoneHandler, u32)> {
-    let soa = match RData::try_from_str(RecordType::SOA, &config.default_soa).anyerr()? {
-        RData::SOA(soa) => soa,
-        _ => return Err(anyerr!("Couldn't parse SOA: {}", config.default_soa)),
-    };
-    let serial = soa.serial;
-    let mut records = BTreeMap::new();
-    for name in origins {
-        push_record(
-            &mut records,
-            serial,
-            Record::from_rdata(name.clone(), DEFAULT_SOA_TTL, RData::SOA(soa.clone())),
-        );
-        if let Some(addr) = config.rr_a {
-            push_record(
-                &mut records,
-                serial,
-                Record::from_rdata(name.clone(), DEFAULT_A_TTL, RData::A(addr.into())),
-            );
-        }
-        if let Some(addr) = config.rr_aaaa {
-            push_record(
-                &mut records,
-                serial,
-                Record::from_rdata(name.clone(), DEFAULT_A_TTL, RData::AAAA(addr.into())),
-            );
-        }
-        if let Some(ns) = &config.rr_ns {
-            let ns = Name::parse(ns, Some(&Name::root())).anyerr()?;
-            push_record(
-                &mut records,
-                serial,
-                Record::from_rdata(name.clone(), DEFAULT_NS_TTL, RData::NS(rdata::NS(ns))),
-            );
-        }
-    }
-
-    let static_authority =
-        InMemoryZoneHandler::new(Name::root(), records, ZoneType::Primary, AxfrPolicy::Deny)
-            .map_err(|e| anyerr!("new authority: {e}"))?;
-
-    Ok((static_authority, serial))
-}
-
-fn push_record(records: &mut BTreeMap<RrKey, RecordSet>, serial: u32, record: Record) {
-    let key = RrKey::new(record.name.clone().into(), record.record_type());
-    let mut record_set = RecordSet::new(record.name.clone(), record.record_type(), serial);
-    record_set.insert(record, serial);
-    records.insert(key, record_set);
 }

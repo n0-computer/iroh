@@ -8,10 +8,6 @@ use axum::{
     extract::State,
     response::{IntoResponse, Response},
 };
-use hickory_server::proto::{
-    serialize::binary::BinDecodable,
-    {self},
-};
 use http::{
     HeaderValue, StatusCode,
     header::{CACHE_CONTROL, CONTENT_TYPE},
@@ -22,8 +18,8 @@ use self::{
     extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery},
     response::DnsResponse,
 };
-use super::error::AppResult;
-use crate::state::AppState;
+use super::error::{AppError, AppResult};
+use crate::{dns::Protocol, state::AppState};
 
 mod extract;
 pub(crate) mod response;
@@ -33,15 +29,18 @@ pub(super) async fn get(
     State(state): State<AppState>,
     DnsRequestQuery(request, accept_type): DnsRequestQuery,
 ) -> AppResult<Response> {
-    let message_bytes = state.dns_handler.answer_request(request).await?;
-    let message = proto::op::Message::from_bytes(&message_bytes).anyerr()?;
+    let (message, max_len) = state
+        .dns_handler
+        .answer(&request, Protocol::Https)
+        .await
+        .ok_or_else(invalid_message)?;
 
     let min_ttl = message.answers.iter().map(|rec| rec.ttl).min();
 
     let mut response = match accept_type {
-        DnsMimeType::Message => (StatusCode::OK, message_bytes).into_response(),
+        DnsMimeType::Message => (StatusCode::OK, message.encode(max_len)).into_response(),
         DnsMimeType::Json => {
-            let response = DnsResponse::from_message(message)?;
+            let response = DnsResponse::from_response(&message);
             (StatusCode::OK, Json(response)).into_response()
         }
     };
@@ -63,9 +62,12 @@ pub(super) async fn post(
     State(state): State<AppState>,
     DnsRequestBody(request): DnsRequestBody,
 ) -> Response {
-    let response = match state.dns_handler.answer_request(request).await {
-        Ok(response) => response,
-        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    let Some(response) = state
+        .dns_handler
+        .answer_bytes(&request, Protocol::Https)
+        .await
+    else {
+        return invalid_message().into_response();
     };
 
     (
@@ -74,6 +76,13 @@ pub(super) async fn post(
         response,
     )
         .into_response()
+}
+
+fn invalid_message() -> AppError {
+    AppError::new(
+        StatusCode::BAD_REQUEST,
+        Some("Invalid DNS message: expected query"),
+    )
 }
 
 // TODO: Port tests from

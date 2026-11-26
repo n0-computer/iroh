@@ -2,13 +2,9 @@
 
 use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
-use hickory_server::proto::{
-    ProtoError,
-    rr::{Name, RecordSet, RecordType, RrKey},
-};
 use iroh_dns::pkarr::{SignedPacket, SignedPacketVerifyError, Timestamp};
 use lru::LruCache;
-use n0_error::{Result, StdResultExt};
+use n0_error::{Result, anyerr};
 use n0_mainline::{Dht, DhtBuilder, MutableItem};
 pub(crate) use signed_packets::Options;
 use tokio::sync::Mutex;
@@ -18,9 +14,11 @@ use ttl_cache::TtlCache;
 use self::signed_packets::SignedPacketStore;
 use crate::{
     config::BootstrapOption,
+    dns::message::{DnsName, QTYPE_ANY, record_type},
     metrics::Metrics,
-    util::{PublicKeyBytes, signed_packet_to_hickory_records_without_origin},
+    util::PublicKeyBytes,
 };
+use simple_dns::{CLASS, Packet, ResourceRecord, TYPE};
 
 mod signed_packets;
 
@@ -95,24 +93,24 @@ impl ZoneStore {
     }
 
     /// Resolve a DNS query.
-    #[tracing::instrument("resolve", skip_all, fields(pubkey=%pubkey,name=%name,typ=%record_type))]
+    ///
+    /// `name` is the lowercased name relative to the zone of `pubkey`.
+    /// Returns `None` if no zone is known for `pubkey`.
+    #[tracing::instrument("resolve", skip_all, fields(pubkey=%pubkey,name=%name,typ=qtype))]
     pub(crate) async fn resolve(
         &self,
         pubkey: &PublicKeyBytes,
-        name: &Name,
-        record_type: RecordType,
-    ) -> Result<Option<Arc<RecordSet>>> {
+        name: &DnsName,
+        qtype: u16,
+    ) -> Result<Option<ZoneLookup>> {
         trace!("store resolve");
 
         // Check cache first (short lock scope)
         {
             let mut cache = self.cache.lock().await;
-            if let Some(rset) = cache.resolve(pubkey, name, record_type) {
-                debug!(
-                    len = rset.records_without_rrsigs().count(),
-                    "resolved from cache"
-                );
-                return Ok(Some(rset));
+            if let Some(res) = cache.resolve(pubkey, name, qtype) {
+                debug!(?res, "resolved from cache");
+                return Ok(Some(res));
             }
         }
 
@@ -120,24 +118,12 @@ impl ZoneStore {
         if let Some(packet) = self.store.get(pubkey).await? {
             trace!(packet_timestamp = ?packet.timestamp(), "store hit");
             let mut cache = self.cache.lock().await;
-            let result = cache.insert_and_resolve(&packet, name, record_type);
-            return match result {
-                Ok(Some(rset)) => {
-                    debug!(
-                        len = rset.records_without_rrsigs().count(),
-                        "resolved from store"
-                    );
-                    Ok(Some(rset))
-                }
-                Ok(None) => {
-                    debug!("resolved to zone, but no matching records in zone");
-                    Ok(None)
-                }
-                Err(err) => {
-                    warn!("failed to retrieve zone after inserting in cache: {err:#?}");
-                    Err(err)
-                }
-            };
+            let res = cache.insert_and_resolve(&packet, name, qtype);
+            match &res {
+                Ok(res) => debug!(?res, "resolved from store"),
+                Err(err) => warn!("failed to retrieve zone after inserting in cache: {err:#?}"),
+            }
+            return res.map(Some);
         };
 
         if let Some(dht) = self.dht.as_ref() {
@@ -151,7 +137,8 @@ impl ZoneStore {
                     .cache
                     .lock()
                     .await
-                    .insert_and_resolve_dht(&packet, name, record_type);
+                    .insert_and_resolve_dht(&packet, name, qtype)
+                    .map(Some);
             }
             debug!("DHT resolve failed");
         }
@@ -230,9 +217,9 @@ impl ZoneCache {
     fn resolve(
         &mut self,
         pubkey: &PublicKeyBytes,
-        name: &Name,
-        record_type: RecordType,
-    ) -> Option<Arc<RecordSet>> {
+        name: &DnsName,
+        qtype: u16,
+    ) -> Option<ZoneLookup> {
         let zone = if let Some(zone) = self.cache.get(pubkey) {
             trace!("cache hit {}", pubkey.to_z32());
             zone
@@ -241,29 +228,30 @@ impl ZoneCache {
             trace!("dht cache hit {}", pubkey.to_z32());
             zone
         };
-        zone.resolve(name, record_type)
+        Some(zone.resolve(name, qtype))
     }
 
     fn insert_and_resolve(
         &mut self,
         signed_packet: &SignedPacket,
-        name: &Name,
-        record_type: RecordType,
-    ) -> Result<Option<Arc<RecordSet>>> {
+        name: &DnsName,
+        qtype: u16,
+    ) -> Result<ZoneLookup> {
         let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
         self.insert(signed_packet)?;
-        Ok(self.resolve(&pubkey, name, record_type))
+        self.resolve(&pubkey, name, qtype)
+            .ok_or_else(|| anyerr!("zone missing from cache after insert"))
     }
 
     fn insert_and_resolve_dht(
         &mut self,
         signed_packet: &SignedPacket,
-        name: &Name,
-        record_type: RecordType,
-    ) -> Result<Option<Arc<RecordSet>>> {
+        name: &DnsName,
+        qtype: u16,
+    ) -> Result<ZoneLookup> {
         let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
-        let zone = CachedZone::from_signed_packet(signed_packet).anyerr()?;
-        let res = zone.resolve(name, record_type);
+        let zone = CachedZone::from_signed_packet(signed_packet)?;
+        let res = zone.resolve(name, qtype);
         self.dht_cache.insert(pubkey, zone, DHT_CACHE_TTL);
         self.metrics
             .cache_zones_dht
@@ -282,10 +270,8 @@ impl ZoneCache {
             trace!("insert skip: cached is newer");
             Ok(())
         } else {
-            self.cache.put(
-                pubkey,
-                CachedZone::from_signed_packet(signed_packet).anyerr()?,
-            );
+            self.cache
+                .put(pubkey, CachedZone::from_signed_packet(signed_packet)?);
             self.metrics.cache_zones.set(self.cache.len() as i64);
             trace!("inserted into cache");
             Ok(())
@@ -302,16 +288,51 @@ impl ZoneCache {
     }
 }
 
+/// The result of looking up a name in a pkarr zone.
+#[derive(Debug, Clone)]
+pub(crate) enum ZoneLookup {
+    /// The name does not exist in the zone.
+    NxDomain,
+    /// The name exists, with these records of the requested type (possibly none).
+    Records(Vec<ResourceRecord<'static>>),
+}
+
+/// Records of a pkarr zone, keyed by name relative to the zone.
 #[derive(Debug)]
 struct CachedZone {
     timestamp: Timestamp,
-    records: BTreeMap<RrKey, Arc<RecordSet>>,
+    /// Records by lowercased relative name, with labels in root-first order.
+    ///
+    /// Root-first order makes all names below a given name a contiguous range.
+    records: BTreeMap<Vec<Vec<u8>>, Vec<ResourceRecord<'static>>>,
 }
 
 impl CachedZone {
-    fn from_signed_packet(signed_packet: &SignedPacket) -> Result<Self, ProtoError> {
-        let (_label, records) =
-            signed_packet_to_hickory_records_without_origin(signed_packet, |_| true)?;
+    /// Builds a zone from the records in a signed packet.
+    ///
+    /// Only records of class IN whose name ends in the z32-encoded public key are used,
+    /// and SOA and NS records are dropped since the zone apex belongs to this server.
+    fn from_signed_packet(signed_packet: &SignedPacket) -> Result<Self> {
+        let zone_label = signed_packet.public_key().to_z32().into_bytes();
+        let packet = Packet::parse(signed_packet.encoded_packet())
+            .map_err(|err| anyerr!("invalid DNS packet in signed packet: {err}"))?;
+        let mut records: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for record in packet.answers {
+            if record.class != CLASS::IN
+                || matches!(record.rdata.type_code(), TYPE::SOA | TYPE::NS | TYPE::OPT)
+            {
+                continue;
+            }
+            let name = DnsName::from_simple(&record.name).to_ascii_lowercase();
+            let Some((last, rest)) = name.labels().split_last() else {
+                continue;
+            };
+            if *last != zone_label {
+                continue;
+            }
+            let key: Vec<Vec<u8>> = rest.iter().rev().cloned().collect();
+            records.entry(key).or_default().push(record.into_owned());
+        }
         Ok(Self {
             records,
             timestamp: signed_packet.timestamp(),
@@ -322,9 +343,28 @@ impl CachedZone {
         self.timestamp > signed_packet.timestamp()
     }
 
-    fn resolve(&self, name: &Name, record_type: RecordType) -> Option<Arc<RecordSet>> {
-        trace!(name=%name, typ=%record_type, "resolve in zone");
-        let key = RrKey::new(name.into(), record_type);
-        self.records.get(&key).cloned()
+    /// Looks up records for a lowercased relative name.
+    fn resolve(&self, name: &DnsName, qtype: u16) -> ZoneLookup {
+        trace!(name=%name, typ=qtype, "resolve in zone");
+        let key: Vec<Vec<u8>> = name.labels().iter().rev().cloned().collect();
+        if let Some(records) = self.records.get(&key) {
+            let records = records
+                .iter()
+                .filter(|record| qtype == QTYPE_ANY || record_type(record) == qtype)
+                .cloned()
+                .collect();
+            return ZoneLookup::Records(records);
+        }
+        // An empty non-terminal, i.e. a name with records only below it, exists too.
+        let has_descendants = self
+            .records
+            .range(key.clone()..)
+            .next()
+            .is_some_and(|(k, _)| k.starts_with(&key));
+        if has_descendants || key.is_empty() {
+            ZoneLookup::Records(Vec::new())
+        } else {
+            ZoneLookup::NxDomain
+        }
     }
 }
