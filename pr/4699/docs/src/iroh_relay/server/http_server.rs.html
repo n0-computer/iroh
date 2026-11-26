@@ -917,7 +917,7 @@
 <a href=#917 id=917 data-nosnippet>917</a>            <span class="comment">// Serve will create a WebSocketStream on an already upgraded connection
 <a href=#918 id=918 data-nosnippet>918</a>            </span>.serve(io);
 <a href=#919 id=919 data-nosnippet>919</a>
-<a href=#920 id=920 data-nosnippet>920</a>        <span class="kw">let </span><span class="kw-2">mut </span>io = WsBytesFramed { io: websocket };
+<a href=#920 id=920 data-nosnippet>920</a>        <span class="kw">let </span><span class="kw-2">mut </span>io = WsBytesFramed::new(websocket);
 <a href=#921 id=921 data-nosnippet>921</a>
 <a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">let </span>client_auth_header = request_parts.headers.get(CLIENT_AUTH_HEADER).cloned();
 <a href=#923 id=923 data-nosnippet>923</a>        <span class="kw">let </span>authentication = handshake::serverside(<span class="kw-2">&amp;mut </span>io, client_auth_header).<span class="kw">await</span><span class="question-mark">?</span>;

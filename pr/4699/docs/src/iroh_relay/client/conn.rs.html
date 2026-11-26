@@ -91,7 +91,7 @@
 <a href=#91 id=91 data-nosnippet>91</a>        secret_key: <span class="kw-2">&amp;</span>SecretKey,
 <a href=#92 id=92 data-nosnippet>92</a>        protocol_version: ProtocolVersion,
 <a href=#93 id=93 data-nosnippet>93</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, handshake::Error&gt; {
-<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">let </span><span class="kw-2">mut </span>conn = WsBytesFramed { io };
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">let </span><span class="kw-2">mut </span>conn = WsBytesFramed::new(io);
 <a href=#95 id=95 data-nosnippet>95</a>
 <a href=#96 id=96 data-nosnippet>96</a>        <span class="comment">// exchange information with the server
 <a href=#97 id=97 data-nosnippet>97</a>        </span><span class="macro">trace!</span>(<span class="string">"server_handshake: started"</span>);
@@ -109,13 +109,13 @@
 <a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>test(io: tokio::io::DuplexStream, protocol_version: ProtocolVersion) -&gt; <span class="self">Self </span>{
 <a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">use </span><span class="kw">crate</span>::protos::relay::MAX_FRAME_SIZE;
 <a href=#111 id=111 data-nosnippet>111</a>        <span class="self">Self </span>{
-<a href=#112 id=112 data-nosnippet>112</a>            conn: WsBytesFramed {
-<a href=#113 id=113 data-nosnippet>113</a>                io: tokio_websockets::ClientBuilder::new()
+<a href=#112 id=112 data-nosnippet>112</a>            conn: WsBytesFramed::new(
+<a href=#113 id=113 data-nosnippet>113</a>                tokio_websockets::ClientBuilder::new()
 <a href=#114 id=114 data-nosnippet>114</a>                    .limits(
 <a href=#115 id=115 data-nosnippet>115</a>                        tokio_websockets::Limits::default().max_payload_len(<span class="prelude-val">Some</span>(MAX_FRAME_SIZE)),
 <a href=#116 id=116 data-nosnippet>116</a>                    )
 <a href=#117 id=117 data-nosnippet>117</a>                    .take_over(MaybeTlsStream::Test(io)),
-<a href=#118 id=118 data-nosnippet>118</a>            },
+<a href=#118 id=118 data-nosnippet>118</a>            ),
 <a href=#119 id=119 data-nosnippet>119</a>            key_cache: KeyCache::test(),
 <a href=#120 id=120 data-nosnippet>120</a>            protocol_version,
 <a href=#121 id=121 data-nosnippet>121</a>        }

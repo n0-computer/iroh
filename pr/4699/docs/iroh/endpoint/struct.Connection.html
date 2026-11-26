@@ -170,8 +170,8 @@ already closed.</p>
 for a stream of <a href="struct.PathList.html" title="struct iroh::endpoint::PathList"><code>PathList</code></a> snapshots and
 <a href="struct.Connection.html#method.path_events" title="method iroh::endpoint::Connection::path_events"><code>Connection::path_events</code></a> for individual <a href="enum.PathEvent.html" title="enum iroh::endpoint::PathEvent"><code>PathEvent</code></a>s.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.paths_stream" class="method"><a class="src rightside" href="../../src/iroh/endpoint/connection.rs.html#1197-1199">Source</a><h4 class="code-header">pub fn <a href="#method.paths_stream" class="fn">paths_stream</a>(&amp;self) -&gt; <a class="struct" href="struct.PathListStream.html" title="struct iroh::endpoint::PathListStream">PathListStream</a>&lt;'_&gt;</h4></section></summary><div class="docblock"><p>Returns a stream of <a href="struct.PathList.html" title="struct iroh::endpoint::PathList"><code>PathList</code></a> snapshots for this connection.</p>
-<p>Yields the current snapshot on the first poll, and a fresh
-snapshot whenever the open paths or the selected path change.
+<p>Yields a snapshot taken at creation, then a fresh one whenever
+the open paths or the selected path change.
 Ends when the connection closes.</p>
 <p>The stream borrows this <a href="struct.Connection.html" title="struct iroh::endpoint::Connection"><code>Connection</code></a>. To consume it from a
 spawned task, move a <a href="struct.Connection.html" title="struct iroh::endpoint::Connection"><code>Connection</code></a> clone into the task and
