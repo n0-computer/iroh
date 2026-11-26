@@ -3,6 +3,12 @@
 All notable changes to iroh-dns will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [1.5.0](https://github.com/n0-computer/iroh/compare/v1.4.2..1.5.0) - 2026-11-19
+
+
+## [1.4.2](https://github.com/n0-computer/iroh/compare/v1.4.1..1.4.2) - 2026-11-19
+
+
 ## [1.4.1](https://github.com/n0-computer/iroh/compare/v1.4.0..1.4.1) - 2026-10-21
 
 ### ⚙️ Miscellaneous Tasks

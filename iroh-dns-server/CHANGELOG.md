@@ -3,6 +3,21 @@
 All notable changes to iroh-dns-server will be documented in this file.
 
 <!-- git-cliff: end of header -->
+## [1.5.0](https://github.com/n0-computer/iroh/compare/v1.4.2..1.5.0) - 2026-11-19
+
+### ⚙️ Miscellaneous Tasks
+
+- *(*)* Dependabot updates ([#4652](https://github.com/n0-computer/iroh/issues/4652)) - ([3e9a854](https://github.com/n0-computer/iroh/commit/3e9a854c3292d2fe5958294674b604331d8a350a))
+- *(iroh-dns-server)* Update n0-mainline to 0.8.0 ([#4698](https://github.com/n0-computer/iroh/issues/4698)) - ([8797f94](https://github.com/n0-computer/iroh/commit/8797f944ecd198b4293baa46782c95c7db2755e5))
+
+### Deps
+
+- Upgrade noq, tokio-rustls-acme, and patchbay deps ([#4701](https://github.com/n0-computer/iroh/issues/4701)) - ([7a863f1](https://github.com/n0-computer/iroh/commit/7a863f1b917213da7c1a8e865b35f403a0fc8072))
+
+
+## [1.4.2](https://github.com/n0-computer/iroh/compare/v1.4.1..1.4.2) - 2026-11-19
+
+
 ## [1.4.1](https://github.com/n0-computer/iroh/compare/v1.4.0..1.4.1) - 2026-10-21
 
 ### ⚙️ Miscellaneous Tasks

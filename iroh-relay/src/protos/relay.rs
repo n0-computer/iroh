@@ -538,12 +538,14 @@ impl ClientToRelayMsg {
     #[allow(clippy::result_large_err)]
     #[cfg(feature = "server")]
     pub(crate) fn from_bytes(mut content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
-        let frame_type = FrameType::from_bytes(&mut content)?;
+        // Check the full frame, including the frame type, so that the limit matches
+        // `encoded_len()` as checked by the client and by the server when forwarding.
         let frame_len = content.len();
         ensure!(
             frame_len <= MAX_PACKET_SIZE,
             Error::FrameTooLarge { frame_len }
         );
+        let frame_type = FrameType::from_bytes(&mut content)?;
 
         let res = match frame_type {
             FrameType::ClientToRelayDatagram | FrameType::ClientToRelayDatagramBatch => {
@@ -775,6 +777,42 @@ mod tests {
                 "expected InvalidFrame for {:?}, got {:?}",
                 frame_type,
                 result
+            );
+        }
+    }
+
+    /// A frame may be at most `MAX_PACKET_SIZE` bytes including its frame type, which is
+    /// the same limit that applies when a frame is encoded.
+    #[test]
+    fn client_to_relay_frame_size_limit() {
+        let dst = SecretKey::from_bytes(&[1u8; 32]).public();
+        for frame_type in [
+            FrameType::ClientToRelayDatagram,
+            FrameType::ClientToRelayDatagramBatch,
+        ] {
+            let frame_of_len = |len: usize| {
+                let mut buf = frame_type.write_to(BytesMut::with_capacity(len));
+                buf.put(dst.as_ref());
+                buf.put_u8(0); // ECN
+                if frame_type == FrameType::ClientToRelayDatagramBatch {
+                    buf.put_u16(1200); // segment size
+                }
+                buf.resize(len, 0);
+                buf.freeze()
+            };
+
+            let result =
+                ClientToRelayMsg::from_bytes(frame_of_len(MAX_PACKET_SIZE), &KeyCache::test());
+            match result {
+                Ok(msg) => assert_eq!(msg.encoded_len(), MAX_PACKET_SIZE),
+                Err(err) => panic!("expected {frame_type:?} to be accepted, got {err:?}"),
+            }
+
+            let result =
+                ClientToRelayMsg::from_bytes(frame_of_len(MAX_PACKET_SIZE + 1), &KeyCache::test());
+            assert!(
+                matches!(result, Err(Error::FrameTooLarge { .. })),
+                "expected FrameTooLarge for {frame_type:?}, got {result:?}"
             );
         }
     }
