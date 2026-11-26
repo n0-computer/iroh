@@ -3,10 +3,7 @@
 // This module is mostly copied from
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
 
-use std::{
-    fmt::Write,
-    net::{Ipv4Addr, Ipv6Addr},
-};
+use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
 use simple_dns::{ResourceRecord, rdata::RData};
@@ -123,59 +120,31 @@ impl DohRecordJson {
     }
 }
 
-/// Formats rdata in presentation format.
+/// Formats rdata for the JSON API.
 ///
-/// TXT strings are concatenated without quotes, which is what clients of this server
-/// expect. Types without a dedicated format use the generic encoding of RFC 3597.
+/// iroh endpoints publish TXT records, whose strings are concatenated without quotes, which
+/// is what clients of this server expect. All other types use the generic encoding of
+/// RFC 3597, which is valid for any type.
 fn rdata_to_string(rdata: &RData<'static>) -> String {
-    let name = |name| DnsName::from_simple(name).to_string();
-    match rdata {
-        RData::A(a) => Ipv4Addr::from(a.address).to_string(),
-        RData::AAAA(aaaa) => Ipv6Addr::from(aaaa.address).to_string(),
-        RData::NS(ns) => name(&ns.0),
-        RData::CNAME(cname) => name(&cname.0),
-        RData::PTR(ptr) => name(&ptr.0),
-        RData::MX(mx) => format!("{} {}", mx.preference, name(&mx.exchange)),
-        RData::SRV(srv) => format!(
-            "{} {} {} {}",
-            srv.priority,
-            srv.weight,
-            srv.port,
-            name(&srv.target)
-        ),
-        RData::SOA(soa) => format!(
-            "{} {} {} {} {} {} {}",
-            name(&soa.mname),
-            name(&soa.rname),
-            soa.serial,
-            soa.refresh,
-            soa.retry,
-            soa.expire,
-            soa.minimum
-        ),
-        RData::TXT(_) => {
-            let wire = rdata_wire(rdata);
-            let mut out = Vec::with_capacity(wire.len());
-            let mut rest = wire.as_slice();
-            while let Some((&len, tail)) = rest.split_first() {
-                let len = (len as usize).min(tail.len());
-                out.extend_from_slice(&tail[..len]);
-                rest = &tail[len..];
-            }
-            String::from_utf8_lossy(&out).into_owned()
+    let wire = rdata_wire(rdata);
+    if let RData::TXT(_) = rdata {
+        let mut out = Vec::with_capacity(wire.len());
+        let mut rest = wire.as_slice();
+        while let Some((&len, tail)) = rest.split_first() {
+            let len = (len as usize).min(tail.len());
+            out.extend_from_slice(&tail[..len]);
+            rest = &tail[len..];
         }
-        _ => {
-            let wire = rdata_wire(rdata);
-            let mut out = format!("\\# {}", wire.len());
-            if !wire.is_empty() {
-                out.push(' ');
-                for b in &wire {
-                    write!(out, "{b:02x}").expect("writing to string");
-                }
-            }
-            out
+        return String::from_utf8_lossy(&out).into_owned();
+    }
+    let mut out = format!("\\# {}", wire.len());
+    if !wire.is_empty() {
+        out.push(' ');
+        for b in &wire {
+            write!(out, "{b:02x}").expect("writing to string");
         }
     }
+    out
 }
 
 #[cfg(test)]
@@ -195,13 +164,8 @@ mod tests {
             "relay=https://relay.example./"
         );
         assert_eq!(
-            rdata_to_string(&RData::A(Ipv4Addr::LOCALHOST.into())),
-            "127.0.0.1"
-        );
-        let target = Name::new_unchecked("example.org").into_owned();
-        assert_eq!(
-            rdata_to_string(&RData::CNAME(rdata::CNAME(target))),
-            "example.org."
+            rdata_to_string(&RData::A(std::net::Ipv4Addr::LOCALHOST.into())),
+            "\\# 4 7f000001"
         );
         let record = ResourceRecord::new(
             Name::new_unchecked("a.example").into_owned(),
