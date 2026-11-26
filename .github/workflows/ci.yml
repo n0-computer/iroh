@@ -369,7 +369,7 @@ jobs:
         continue-on-error: true
       - uses: $/.github/workflows/sccache-probe
       # TODO: Undo after the next release! Works around broken hickroy-server patch release.
-      - name: pin hickory server TODO: remove!
+      - name: "pin hickory server TODO: remove!"
         run: |
           : "${CARGO_HOME:=$HOME/.cargo}"
           mkdir -p "$CARGO_HOME"
