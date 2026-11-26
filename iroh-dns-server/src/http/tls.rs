@@ -6,10 +6,7 @@ use std::{
     time::Duration,
 };
 
-use axum_server::{
-    accept::Accept,
-    tls_rustls::{RustlsAcceptor, RustlsConfig},
-};
+use axum_server::accept::Accept;
 use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::{FutureExt, future::Boxed as BoxFuture};
 use rustls::{
@@ -65,7 +62,7 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Clone)]
 pub(crate) enum TlsAcceptor {
     LetsEncrypt(AxumAcceptor),
-    Manual(RustlsAcceptor),
+    Manual(tokio_rustls::TlsAcceptor),
 }
 
 impl<I: AsyncRead + AsyncWrite + Unpin + Send + 'static, S: Send + 'static> Accept<I, S>
@@ -78,9 +75,12 @@ impl<I: AsyncRead + AsyncWrite + Unpin + Send + 'static, S: Send + 'static> Acce
     fn accept(&self, stream: I, service: S) -> Self::Future {
         let accept = match self {
             Self::LetsEncrypt(a) => a.accept(stream, service).boxed(),
-            Self::Manual(a) => a.accept(stream, service).boxed(),
+            Self::Manual(a) => {
+                let accept = a.accept(stream);
+                async move { Ok((accept.await?, service)) }.boxed()
+            }
         };
-        // The ACME acceptor has no handshake timeout of its own.
+        // Neither acceptor enforces our handshake timeout on its own.
         async move {
             tokio::time::timeout(TLS_HANDSHAKE_TIMEOUT, accept)
                 .await
@@ -110,7 +110,7 @@ impl TlsAcceptor {
                 .anyerr()?;
 
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-        let acceptor = RustlsAcceptor::new(RustlsConfig::from_config(Arc::new(config)));
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
         Ok(Self::Manual(acceptor))
     }
 
@@ -134,8 +134,7 @@ impl TlsAcceptor {
         let secret_key = load_secret_key(key_path).await?;
 
         let config = config.with_single_cert(certs, secret_key).anyerr()?;
-        let config = RustlsConfig::from_config(Arc::new(config));
-        let acceptor = RustlsAcceptor::new(config);
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
         Ok(Self::Manual(acceptor))
     }
 
@@ -210,12 +209,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_handshake_timeout() {
-        let TlsAcceptor::Manual(inner) =
-            TlsAcceptor::self_signed(vec!["localhost".to_string()]).unwrap()
-        else {
-            unreachable!("self-signed mode uses the manual acceptor");
-        };
-        let acceptor = TlsAcceptor::Manual(inner.handshake_timeout(Duration::from_secs(3600)));
+        let acceptor = TlsAcceptor::self_signed(vec!["localhost".to_string()]).unwrap();
         let (_client, server_io) = tokio::io::duplex(1024);
 
         let start = Instant::now();
