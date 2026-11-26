@@ -1,0 +1,26 @@
+# Daily CI jobs that don't need to run on every PR
+# These jobs run on a schedule and report failures to Discord
+
+name: Daily CI
+
+on:
+  schedule:
+    # 02:00 UTC every day
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: daily-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default to read-only; jobs that need more grant it explicitly.
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    uses: "n0-computer/workflows/.github/workflows/cargo-deny.yaml@v2"
+    with:
+      force: true
+    secrets:
+      DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
