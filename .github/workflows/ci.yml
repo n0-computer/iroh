@@ -553,7 +553,7 @@ jobs:
 
   cargo_deny:
     name: cargo deny
-    uses: "n0-computer/workflows/.github/workflows/cargo-deny.yaml@flub/deny"
+    uses: "n0-computer/workflows/.github/workflows/cargo-deny.yaml@v2"
 
   netsim-integration-tests:
     permissions:

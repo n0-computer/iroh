@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   cargo-deny:
-    uses: "n0-computer/workflows/.github/workflows/cargo-deny.yaml@flub/deny"
+    uses: "n0-computer/workflows/.github/workflows/cargo-deny.yaml@v2"
     with:
       force: true
     secrets:
