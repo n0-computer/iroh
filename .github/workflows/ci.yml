@@ -542,9 +542,9 @@ jobs:
         run: |
           cargo +$MSRV check --locked --workspace --all-targets
 
-cargo_deny:
-  name: cargo deny
-  uses: "n0-computer/workflows/.github/workflows/cargo-deny.yaml@flub/deny"
+  cargo_deny:
+    name: cargo deny
+    uses: "n0-computer/workflows/.github/workflows/cargo-deny.yaml@flub/deny"
 
   netsim-integration-tests:
     permissions:
