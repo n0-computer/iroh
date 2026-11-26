@@ -182,6 +182,10 @@ impl ZoneHandler for NodeZoneHandler {
     ) -> LookupControlFlow<AuthLookup> {
         LookupControlFlow::Skip
     }
+
+    fn metrics_label(&self) -> &'static str {
+        ""
+    }
 }
 
 fn parse_name_as_pkarr_with_origin(
