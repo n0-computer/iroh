@@ -7,7 +7,6 @@ use std::{
 
 use n0_error::e;
 use n0_future::time::Instant;
-use rustc_hash::FxHashMap;
 use tokio::sync::oneshot;
 use tracing::trace;
 
@@ -32,7 +31,7 @@ pub(super) struct RemotePathState {
     ///
     /// These paths might be entirely impossible to use, since they are added by Address Lookup
     /// mechanisms. The are only potentially usable.
-    paths: FxHashMap<transports::Addr, PathState>,
+    paths: HashMap<transports::Addr, PathState>,
     /// Pending resolve requests from [`Self::resolve_remote`].
     pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), AddressLookupFailed>>>,
     metrics: Arc<SocketMetrics>,
@@ -253,7 +252,7 @@ pub(super) struct PathState {
 /// - We do not prune holepunched paths that are currently not in use too quickly. For
 ///   example, if a large number of untested paths are added at once, we will not
 ///   immediately prune all of the unused, but valid, paths at once.
-fn prune_non_relay_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
+fn prune_non_relay_paths(paths: &mut HashMap<transports::Addr, PathState>) {
     // if the total number of paths is less than the max, bail early
     if paths.len() < MAX_NON_RELAY_PATHS {
         return;
@@ -343,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_prune_under_max_paths() {
-        let mut paths = FxHashMap::default();
+        let mut paths = HashMap::default();
         for i in 0..20 {
             paths.insert(ip_addr(i), PathState::default());
         }
@@ -358,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_prune_at_max_paths_no_prunable() {
-        let mut paths = FxHashMap::default();
+        let mut paths = HashMap::default();
         // All paths are active (never abandoned), so none should be pruned
         for i in 0..MAX_NON_RELAY_PATHS {
             paths.insert(ip_addr(i as u16), PathState::default());
@@ -374,7 +373,7 @@ mod tests {
 
     #[test]
     fn test_prune_failed_holepunch() {
-        let mut paths = FxHashMap::default();
+        let mut paths = HashMap::default();
 
         // Add 20 active paths
         for i in 0..20 {
@@ -400,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_prune_keeps_most_recent_inactive() {
-        let mut paths = FxHashMap::default();
+        let mut paths = HashMap::default();
         let now = Instant::now();
 
         // Add 15 active paths
@@ -443,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_prune_mixed_must_and_can_prune() {
-        let mut paths = FxHashMap::default();
+        let mut paths = HashMap::default();
         let now = Instant::now();
 
         // Add 15 active paths
@@ -487,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_prune_relay_paths_not_counted() {
-        let mut paths = FxHashMap::default();
+        let mut paths = HashMap::default();
 
         // Add 25 IP paths (under MAX_NON_RELAY_PATHS)
         for i in 0..25 {
@@ -514,7 +513,7 @@ mod tests {
 
     #[test]
     fn test_prune_preserves_never_dialed() {
-        let mut paths = FxHashMap::default();
+        let mut paths = HashMap::default();
 
         // Add 20 never-dialed paths (PathStatus::Unknown)
         for i in 0..20 {
@@ -536,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_prune_all_paths_failed() {
-        let mut paths = FxHashMap::default();
+        let mut paths = HashMap::default();
 
         // Add 40 failed holepunch paths (all paths have failed)
         for i in 0..40 {
