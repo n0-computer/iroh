@@ -2919,6 +2919,52 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    async fn removed_relay_stops_being_home_relay() -> Result {
+        let (relay_map, relay_url, _guard) = run_relay_server().await?;
+        let relay_config = relay_map.get(&relay_url).expect("missing relay");
+        let unreachable_url: RelayUrl = "https://127.0.0.1:1".parse()?;
+
+        for replacement in [None, Some(unreachable_url)] {
+            let ep = Endpoint::builder(presets::Minimal)
+                .relay_mode(RelayMode::Custom(RelayMap::from_iter([
+                    relay_config.clone()
+                ])))
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+                .bind()
+                .await?;
+            time::timeout(Duration::from_secs(5), ep.online())
+                .await
+                .std_context("endpoint did not come online")?;
+            assert_eq!(ep.addr().relay_urls().next(), Some(&relay_url));
+
+            if let Some(url) = &replacement {
+                let config = Arc::new(RelayConfig::new(url.clone(), None));
+                assert!(ep.insert_relay(url.clone(), config).await.is_none());
+            }
+            assert!(ep.remove_relay(&relay_url).await.is_some());
+
+            let mut addrs = ep.watch_addr().stream();
+            time::timeout(Duration::from_secs(10), async {
+                while let Some(addr) = addrs.next().await {
+                    if addr.relay_urls().next().is_none() {
+                        break;
+                    }
+                }
+            })
+            .await
+            .ok();
+            let home_relays: Vec<_> = ep.addr().relay_urls().cloned().collect();
+            assert!(
+                home_relays.is_empty(),
+                "home relay is {home_relays:?} after removing {relay_url}, replacement {replacement:?}"
+            );
+            ep.close().await;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn endpoint_bidi_send_recv() -> Result {
         let disco = MemoryLookup::new();
         let ep1 = Endpoint::builder(presets::Minimal)
