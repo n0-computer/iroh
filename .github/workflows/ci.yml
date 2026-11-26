@@ -336,10 +336,10 @@ jobs:
         run: cargo build --locked --target wasm32-unknown-unknown -p iroh-base --all-features
 
       - name: wasm32 build (iroh-relay)
-        run: cargo build --locked --target wasm32-unknown-unknown -p iroh-relay
+        run: cargo build --locked --target wasm32-unknown-unknown -p iroh-relay --features wasm_js
 
       - name: wasm32 build (iroh)
-        run: cargo build --locked --target wasm32-unknown-unknown -p iroh
+        run: cargo build --locked --target wasm32-unknown-unknown -p iroh --features wasm_js
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.

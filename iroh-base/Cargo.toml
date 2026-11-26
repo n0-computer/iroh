@@ -29,7 +29,7 @@ tracing = { version = "0.1", optional = true }
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-getrandom = { version = "0.4", features = ["wasm_js"], optional = true }
+getrandom = { version = "0.4", optional = true }
 
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }
@@ -41,6 +41,9 @@ serde_test = "1"
 
 [features]
 default = ["relay"]
+# On wasm32-unknown-unknown, selects getrandom's browser entropy source. Final binaries that
+# do not provide their own getrandom backend enable this; libraries should leave it off.
+wasm_js = ["getrandom?/wasm_js"]
 key = [
   "dep:curve25519-dalek",
   "dep:ed25519-dalek",
