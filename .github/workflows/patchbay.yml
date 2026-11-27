@@ -43,7 +43,7 @@ jobs:
         continue-on-error: true
       - uses: $/.github/workflows/sccache-probe
       - name: Install cargo-make and cargo-nextest
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }},cargo-make
 

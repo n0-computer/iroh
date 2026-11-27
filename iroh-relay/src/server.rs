@@ -56,7 +56,7 @@ use tracing::{Instrument, debug, error, info, info_span, instrument};
 
 use self::http_server::{BytesBody, HyperError, HyperResult};
 use crate::{
-    defaults::DEFAULT_KEY_CACHE_CAPACITY,
+    defaults::{DEFAULT_KEY_CACHE_CAPACITY, DEFAULT_LISTEN_BACKLOG},
     http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_RELATIVE_PATH},
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
     tls::CaTlsConfig,
@@ -143,6 +143,8 @@ pub struct RelayConfig {
     pub limits: Limits,
     /// Key cache capacity.
     pub key_cache_capacity: Option<usize>,
+    /// Listen queue length (defaults to 1024, capped by `net.core.somaxconn` on Linux).
+    pub listen_backlog: Option<u32>,
     /// Access control for incoming connections.
     pub access: Arc<dyn DynAccessControl>,
 }
@@ -159,6 +161,7 @@ impl RelayConfig {
             tls: None,
             limits: Limits::default(),
             key_cache_capacity: None,
+            listen_backlog: None,
             access: Arc::new(AllowAll),
         }
     }
@@ -733,6 +736,11 @@ impl Server {
                     .metrics(metrics.server.clone())
                     .headers(headers)
                     .key_cache_capacity(key_cache_capacity)
+                    .listen_backlog(
+                        relay_config
+                            .listen_backlog
+                            .unwrap_or(DEFAULT_LISTEN_BACKLOG),
+                    )
                     .access(relay_config.access)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
@@ -828,7 +836,7 @@ impl Server {
                         (None, None)
                     }
                 };
-                let relay_server = builder.spawn().await?;
+                let relay_server = builder.spawn()?;
                 (Some(relay_server), http_addr, tls_config)
             }
             None => (None, None, None),
@@ -1220,7 +1228,7 @@ mod tests {
         client::{ClientBuilder, ConnectError},
         protos::{
             handshake,
-            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+            relay::{ClientToRelayMsg, Datagrams, MAX_PACKET_SIZE, RelayToClientMsg},
         },
         test_utils::static_resolver,
         tls::{self, CaTlsConfig, default_provider},
@@ -1383,6 +1391,30 @@ mod tests {
             .connect()
             .await?;
 
+        // Empty datagrams must pass through without disconnecting either client.
+        // The nonempty exchanges below also verify that both connections remain usable.
+        let msg = Datagrams {
+            ecn: None,
+            segment_size: None,
+            contents: bytes::Bytes::new(),
+        };
+        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
+        assert_eq!(
+            res,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: a_key,
+                datagrams: msg.clone(),
+            }
+        );
+        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
+        assert_eq!(
+            res,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: b_key,
+                datagrams: msg,
+            }
+        );
+
         info!("sending a -> b");
 
         // send message from a to b
@@ -1414,6 +1446,49 @@ mod tests {
 
         assert_eq!(b_key, remote_endpoint_id);
         assert_eq!(msg, datagrams);
+
+        Ok(())
+    }
+
+    /// The largest payload that fits into a frame is still delivered.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_relay_largest_payload() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
+        let server = spawn_local_relay().await?;
+
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse()?;
+
+        let client_config = CaTlsConfig::default()
+            .client_config(default_provider())
+            .unwrap();
+
+        let a_secret_key = SecretKey::from_bytes(&rng.random());
+        let a_key = a_secret_key.public();
+        let resolver = dns_resolver();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .tls_client_config(client_config.clone())
+            .connect()
+            .await?;
+
+        let b_secret_key = SecretKey::from_bytes(&rng.random());
+        let b_key = b_secret_key.public();
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .tls_client_config(client_config)
+            .connect()
+            .await?;
+
+        // Frame type (1), endpoint id (32) and ECN (1) take up 34 bytes of the frame.
+        let msg = Datagrams::from(vec![7u8; MAX_PACKET_SIZE - 34]);
+        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
+        assert_eq!(
+            res,
+            RelayToClientMsg::Datagrams {
+                remote_endpoint_id: a_key,
+                datagrams: msg,
+            }
+        );
 
         Ok(())
     }

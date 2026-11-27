@@ -56,11 +56,11 @@ impl ServerRelayedStream {
         let stream = MaybeTlsStream::Test(stream);
         let stream = RateLimited::unlimited(stream, Arc::new(Metrics::default()));
         Self {
-            inner: WsBytesFramed {
-                io: tokio_websockets::ServerBuilder::new()
+            inner: WsBytesFramed::new(
+                tokio_websockets::ServerBuilder::new()
                     .limits(Self::limits())
                     .serve(stream),
-            },
+            ),
             key_cache: KeyCache::test(),
         }
     }
@@ -79,11 +79,11 @@ impl ServerRelayedStream {
         )?;
         let limited_watcher = stream.limited_watcher();
         let stream = Self {
-            inner: WsBytesFramed {
-                io: tokio_websockets::ServerBuilder::new()
+            inner: WsBytesFramed::new(
+                tokio_websockets::ServerBuilder::new()
                     .limits(Self::limits())
                     .serve(stream),
-            },
+            ),
             key_cache: KeyCache::test(),
         };
         Ok((stream, limited_watcher))
@@ -112,7 +112,9 @@ pub enum SendError {
         /// The size of the packet that was too large
         size: usize,
     },
-    /// Attempted to send an empty packet
+    /// Attempt to send an empty packet
+    ///
+    /// Deprecated: no longer returned. Will be marked `#[deprecated]` in the next minor release.
     #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
@@ -133,9 +135,6 @@ where
             size <= MAX_PACKET_SIZE,
             SendError::ExceedsMaxPacketSize { size }
         );
-        if let RelayToClientMsg::Datagrams { datagrams, .. } = &item {
-            ensure!(!datagrams.contents.is_empty(), SendError::EmptyPacket);
-        }
 
         Pin::new(&mut self.inner)
             .start_send(item.to_bytes().freeze())
@@ -646,11 +645,11 @@ mod tests {
     use std::sync::Arc;
 
     use n0_error::{Result, StdResultExt};
-    use n0_future::time;
+    use n0_future::{StreamExt, time};
     use n0_tracing_test::traced_test;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    use super::Bucket;
+    use super::{Bucket, ServerRelayedStream};
     use crate::server::{Metrics, streams::RateLimited};
 
     #[tokio::test(start_paused = true)]
@@ -807,5 +806,25 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unread_pongs_hold_back_further_pings() {
+        let (local, mut remote) = tokio::io::duplex(64);
+        let mut local = ServerRelayedStream::test(local);
+
+        let pings = [0x89, 0x80, 0, 0, 0, 0].repeat(10_000);
+        let timed_out = time::timeout(time::Duration::from_secs(60), async {
+            tokio::select! {
+                _ = local.next() => (),
+                _ = remote.write_all(&pings) => (),
+            }
+        })
+        .await
+        .is_err();
+        assert!(
+            timed_out,
+            "relay read or peer write completed before the timeout"
+        );
     }
 }

@@ -40,6 +40,7 @@ pub enum SendError {
     StreamError { source: AnyError },
     #[error("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}")]
     ExceedsMaxPacketSize { size: usize },
+    /// Deprecated: no longer returned. Will be marked `#[deprecated]` in the next minor release.
     #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
@@ -90,7 +91,7 @@ impl Conn {
         secret_key: &SecretKey,
         protocol_version: ProtocolVersion,
     ) -> Result<Self, handshake::Error> {
-        let mut conn = WsBytesFramed { io };
+        let mut conn = WsBytesFramed::new(io);
 
         // exchange information with the server
         trace!("server_handshake: started");
@@ -108,13 +109,13 @@ impl Conn {
     pub(crate) fn test(io: tokio::io::DuplexStream, protocol_version: ProtocolVersion) -> Self {
         use crate::protos::relay::MAX_FRAME_SIZE;
         Self {
-            conn: WsBytesFramed {
-                io: tokio_websockets::ClientBuilder::new()
+            conn: WsBytesFramed::new(
+                tokio_websockets::ClientBuilder::new()
                     .limits(
                         tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)),
                     )
                     .take_over(MaybeTlsStream::Test(io)),
-            },
+            ),
             key_cache: KeyCache::test(),
             protocol_version,
         }
@@ -150,9 +151,6 @@ impl Sink<ClientToRelayMsg> for Conn {
             size <= MAX_PACKET_SIZE,
             SendError::ExceedsMaxPacketSize { size }
         );
-        if let ClientToRelayMsg::Datagrams { datagrams, .. } = &frame {
-            ensure!(!datagrams.contents.is_empty(), SendError::EmptyPacket);
-        }
 
         Pin::new(&mut self.conn)
             .start_send(frame.to_bytes().freeze())
