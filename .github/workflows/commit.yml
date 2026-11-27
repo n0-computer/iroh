@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
     types: [opened, edited, synchronize]
+  merge_group:
 
 env:
   IROH_FORCE_STAGING_RELAYS: "1"
