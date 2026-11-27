@@ -54,7 +54,7 @@ use tokio_rustls_acme::{
 };
 use tracing::{Instrument, debug, error, info, info_span, instrument};
 
-use self::http_server::{BytesBody, HyperError, HyperResult};
+use self::http_server::{BytesBody, HyperError, HyperResult, handle_accept_error};
 use crate::{
     defaults::{DEFAULT_KEY_CACHE_CAPACITY, DEFAULT_LISTEN_BACKLOG},
     http::{AUTH_TOKEN_URL_QUERY_PARAM, ProtocolVersion, RELAY_PROBE_RELATIVE_PATH},
@@ -1156,12 +1156,7 @@ async fn run_captive_portal_service(http_listener: TcpListener) {
                             }
                         });
                     }
-                    Err(err) => {
-                        error!(
-                            "[CaptivePortalService] failed to accept connection: {:#?}",
-                            err
-                        );
-                    }
+                    Err(err) => handle_accept_error(err).await,
                 }
             }
         }

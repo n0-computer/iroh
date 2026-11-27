@@ -521,9 +521,10 @@ impl ServerBuilder {
                                         .await
                                 }.instrument(info_span!("conn", peer = %peer_addr)));
                             }
-                            Err(err) => {
-                                error!("failed to accept connection: {err}");
-                            }
+                            Err(err) => tokio::select! {
+                                _ = cancel.cancelled() => break,
+                                _ = handle_accept_error(err) => continue,
+                            },
                         }
                     }
                 }
@@ -540,6 +541,28 @@ impl ServerBuilder {
             cancel_server_loop: cancel_token,
             service,
         })
+    }
+}
+
+/// Waits after a failed `accept()` before the listener tries again.
+///
+/// Dropping the future cancels the back off.
+pub(super) async fn handle_accept_error(err: std::io::Error) {
+    use std::io::ErrorKind;
+
+    match err.kind() {
+        // Ignore common transient connection errors
+        ErrorKind::ConnectionRefused
+        | ErrorKind::ConnectionAborted
+        | ErrorKind::ConnectionReset
+        | ErrorKind::TimedOut
+        | ErrorKind::Interrupted => {}
+        // Other errors can persist until resources are freed, so
+        // retrying immediately would busy-loop
+        _ => {
+            error!("failed to accept connection: {err}");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
 }
 
