@@ -221,25 +221,22 @@ impl PathStateSender {
     }
 
     /// Updates the selected transmission path.
-    pub(super) fn record_selected(&self, network_path: &transports::FourTuple) {
-        let remote_addr: TransportAddr = network_path.remote().into();
-        let local_addr = network_path.local();
+    pub(super) fn record_selected(&self, selected: Option<PathId>) {
         let event = {
             let mut state = self.shared.state.lock().expect("poisoned");
-            let selected_path_id = state
-                .list
-                .iter()
-                .find(|p| p.remote_addr == remote_addr && p.local_addr == local_addr)
-                .map(|p| p.handle.id());
-            if selected_path_id == state.selected {
+            if selected == state.selected {
                 return;
             }
-            state.selected = selected_path_id;
-            selected_path_id.map(|path_id| PathEvent::Selected {
-                id: path_id,
-                remote_addr: remote_addr.clone(),
-                local_addr: local_addr.clone(),
-            })
+            state.selected = selected;
+            state
+                .list
+                .iter()
+                .find(|path| Some(path.handle.id()) == selected)
+                .map(|path| PathEvent::Selected {
+                    id: path.handle.id(),
+                    remote_addr: path.remote_addr.clone(),
+                    local_addr: path.local_addr.clone(),
+                })
         };
         // Notify even if the selection was cleared, which emits no event.
         self.shared.notify.notify_waiters();

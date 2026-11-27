@@ -44,6 +44,8 @@ use crate::{
 mod path_state;
 mod path_watcher;
 mod remote_info;
+#[cfg(all(test, not(wasm_browser), with_crypto_provider))]
+mod selection_tests;
 
 /// How often to attempt holepunching.
 ///
@@ -415,6 +417,7 @@ impl RemoteStateActor {
             .insert_entry(ConnectionState {
                 handle: conn.weak_handle(),
                 path_state: path_state_sender,
+                selected_path: None,
                 paths: Default::default(),
                 has_been_direct: false,
             })
@@ -456,8 +459,8 @@ impl RemoteStateActor {
         // Ping all the paths so loss-detection starts ASAP.
         for conn in self.connections.values() {
             if let Some(noq_conn) = conn.handle.upgrade() {
-                for (path_id, addr) in &conn.paths {
-                    if let Some(path) = noq_conn.path(*path_id) {
+                for (path_id, addr) in conn.open_paths() {
+                    if let Some(path) = noq_conn.path(path_id) {
                         // Ping the current path
                         if let Err(err) = path.ping() {
                             warn!(%err, %path_id, ?addr, "failed to ping path");
@@ -488,6 +491,8 @@ impl RemoteStateActor {
         if self.connections.is_empty() {
             trace!("last connection closed - clearing selected_path");
             self.state.selected_path = None;
+        } else {
+            self.select_path();
         }
     }
 
@@ -611,7 +616,7 @@ impl RemoteStateActor {
                 if !conn_state
                     .paths
                     .values()
-                    .any(|tuple| tuple.remote() == network_path.remote())
+                    .any(|path| path.addr.remote() == network_path.remote())
                 {
                     self.state.paths.abandoned_path(&network_path.remote());
                 }
@@ -647,10 +652,17 @@ impl RemoteStateActor {
 
     /// Selects the preferred path by invoking the configured [`PathSelector`].
     ///
-    /// The selected path is added to any connections which do not yet have it.  Any unused
-    /// direct paths are closed for all connections.
+    /// Each connection uses this preference once it has established the path.
     #[instrument(skip_all)]
     fn select_path(&mut self) {
+        if let Some(current) = &self.state.selected_path
+            && !self
+                .connections
+                .values()
+                .any(|state| state.handle.upgrade().is_some() && state.path_id(current).is_some())
+        {
+            self.state.selected_path = None;
+        }
         let current_path = self.state.selected_path.as_ref();
         let selected_addr = {
             let ctx = PathSelectionContext::new(current_path, &self.connections);
@@ -675,68 +687,69 @@ impl RemoteStateActor {
         self.apply_selected_path();
     }
 
-    /// Propagates a change of [`State::selected_path`] to noq.
-    ///
-    /// Iterates over all connections and applies the selected path as follows:
-    /// - Closes non-selected IP paths (but keeps one IP path open still)
-    /// - Sets all non-selected paths to [`PathStatus::Backup`]
-    /// - Opens the selected path if it does not exist on the connection
-    /// - Sets the selected path to [`PathStatus::Available`]
+    /// Applies the peer preference where established, selecting a local fallback elsewhere.
     fn apply_selected_path(&mut self) {
-        let Some(selected) = self.state.selected_path.clone() else {
-            // We can't open the selected path on all paths if we don't have one yet.  And
-            // we can't close all "unselected" paths either, because we don't know which one
-            // is selected.
-            return;
-        };
-
-        for (conn_id, conn_state) in self.connections.iter() {
+        let preferred = self.state.selected_path.clone();
+        for (conn_id, conn_state) in &mut self.connections {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-
-            // Open path if it doesn't exist yet.
+            if let Some(addr) = &preferred {
+                self.state
+                    .open_path_on_conn(*conn_id, conn_state, &conn, addr);
+            }
+            let selected = preferred
+                .as_ref()
+                .and_then(|addr| conn_state.path_id(addr))
+                .or_else(|| conn_state.select_path(&conn, self.state.path_selector.as_ref()));
+            let Some(chosen) = selected.and_then(|id| conn.path(id)) else {
+                conn_state.selected_path = None;
+                conn_state.path_state.record_selected(None);
+                continue;
+            };
+            let id = chosen.id();
+            let addr = conn_state.paths[&id].addr.clone();
+            // Make the replacement available before changing any other path.
             self.state
-                .open_path_on_conn(*conn_id, conn_state, &conn, &selected);
-
-            for (path_id, path_fourtuple) in conn_state.paths.iter() {
+                .set_path_status(*conn_id, &chosen, &addr, PathStatus::Available);
+            // Only the client prunes. Keep an established IP even when the
+            // selected transport is a relay or custom transport.
+            let keep_ip = if addr.is_ip() {
+                Some(id)
+            } else {
+                conn_state
+                    .open_paths()
+                    .filter(|(id, addr)| addr.is_ip() && conn.path(*id).is_some())
+                    .map(|(id, _)| id)
+                    .min()
+            };
+            for (path_id, entry) in &mut conn_state.paths {
+                if *path_id == id || entry.closing {
+                    continue;
+                }
                 let Some(path) = conn.path(*path_id) else {
                     continue;
                 };
-
-                // Closes redundant IP paths so that at most one remains per connection.
-                //
-                // Relay and custom paths are kept open. Only the client closes paths,
-                // to avoid the client and server independently closing different paths
-                // and racing to abandon the last one.
-                if conn.side().is_client()
-                    && path_fourtuple.is_ip()
-                    && path_fourtuple != &selected
-                    && conn_state.paths.values().filter(|a| a.is_ip()).count() > 1
-                {
-                    trace!(?path_fourtuple, %conn_id, %path_id, "closing direct path");
+                if conn.side().is_client() && entry.addr.is_ip() && Some(*path_id) != keep_ip {
+                    trace!(network_path = %entry.addr, %conn_id, %path_id, "closing direct path");
                     match path.close() {
-                        Err(noq_proto::ClosePathError::MultipathNotNegotiated) => {
-                            error!("multipath not negotiated");
+                        Ok(()) | Err(noq_proto::ClosePathError::ClosedPath) => {
+                            entry.closing = true;
                         }
-                        Err(noq_proto::ClosePathError::LastOpenPath) => {
-                            error!("could not close last open path");
-                        }
-                        Err(noq_proto::ClosePathError::ClosedPath) => {
-                            // We already closed this.
-                        }
-                        Ok(()) => {}
+                        Err(err) => error!(%err, "could not close redundant IP path"),
                     }
-                    continue;
+                } else {
+                    let status = if entry.addr == addr {
+                        PathStatus::Available
+                    } else {
+                        PathStatus::Backup
+                    };
+                    self.state
+                        .set_path_status(*conn_id, &path, &entry.addr, status);
                 }
-
-                // Set path status: The selected path becomes Available, all other paths
-                // become Backup.
-                self.state.set_path_status(*conn_id, &path, path_fourtuple);
             }
-
-            // Record the new selected path in the path watcher.
-            conn_state.path_state.record_selected(&selected);
+            conn_state.selected_path = Some(addr);
+            conn_state.path_state.record_selected(Some(id));
         }
     }
 
@@ -759,11 +772,10 @@ impl RemoteStateActor {
             let mut is_conn_goodenough = false;
             if let Some(conn) = conn_state.handle.upgrade() {
                 let min_ip_rtt = conn_state
-                    .paths
-                    .iter()
+                    .open_paths()
                     .filter_map(|(path_id, addr)| {
                         if addr.is_ip() {
-                            conn.path_stats(*path_id).map(|stats| stats.rtt)
+                            conn.path_stats(path_id).map(|stats| stats.rtt)
                         } else {
                             None
                         }
@@ -989,8 +1001,6 @@ impl State {
     ///
     /// This inserts the path in the [`ConnectionState`] and [`Self::paths`].
     ///
-    /// It configures the path with the correct path status (see [`Self::set_path_status`]),
-    /// and applies path-type-specific settings:
     /// Relay paths get a longer idle timeout to accommodate transparent reconnection
     /// by the relay actor (see [`RELAY_PATH_MAX_IDLE_TIMEOUT`]).
     fn register_and_configure_path(
@@ -1017,19 +1027,18 @@ impl State {
             debug!(?e, "failed to set relay path idle timeout");
         }
 
-        self.set_path_status(conn_id, path, &network_path);
         self.paths
             .insert_open_path(network_path.remote(), Source::Connection);
         Some(network_path)
     }
 
     fn set_path_status(
-        &mut self,
+        &self,
         conn_id: ConnId,
         path: &noq::Path,
         network_path: &transports::FourTuple,
+        status: PathStatus,
     ) {
-        let status = self.path_status_for_addr(network_path);
         match path.set_status(status) {
             Err(error) => warn!(?error, ?network_path, ?status, "set_status failed"),
             Ok(prev_status) if prev_status != status => {
@@ -1061,7 +1070,7 @@ impl State {
             return;
         }
         // Already open on this connection; nothing to do.
-        if conn_state.paths.values().any(|a| a == open_4tuple) {
+        if conn_state.path_id(open_4tuple).is_some() {
             return;
         }
 
@@ -1094,7 +1103,7 @@ impl State {
         }
     }
 
-    /// Returns the [`PathStatus`] for `addr`.
+    /// Returns the initial [`PathStatus`] for a path being opened to `addr`.
     ///
     /// Returns [`PathStatus::Available`] if `addr` is the currently-selected path,
     /// or [`PathStatus::Backup`] otherwise.
@@ -1266,6 +1275,8 @@ struct ConnectionState {
     ///
     /// [`Connection`]: crate::endpoint::Connection
     path_state: PathStateSender,
+    /// Last effective selection on this connection, including a local fallback.
+    selected_path: Option<transports::FourTuple>,
     /// The open paths that exist on this connection.
     ///
     /// This might be lagging from the connection state inside noq itself as this can only
@@ -1274,14 +1285,56 @@ struct ConnectionState {
     /// IP paths *should* have the local IP address filled in by the time we receive the
     /// event. The noq established event is only emitted once at least one datagram is
     /// received from the peer on the path.
-    paths: FxHashMap<PathId, transports::FourTuple>,
+    paths: FxHashMap<PathId, ConnectionPath>,
     /// Whether this connection has ever had a direct path.
     ///
     /// Used for recording metrics.
     has_been_direct: bool,
 }
 
+#[derive(Debug)]
+struct ConnectionPath {
+    addr: transports::FourTuple,
+    /// We have requested closure and are waiting for [`NoqPathEvent::Abandoned`].
+    closing: bool,
+}
+
 impl ConnectionState {
+    fn open_paths(&self) -> impl Iterator<Item = (PathId, &transports::FourTuple)> {
+        self.paths
+            .iter()
+            .filter(|(_, path)| !path.closing)
+            .map(|(id, path)| (*id, &path.addr))
+    }
+
+    fn path_id(&self, addr: &transports::FourTuple) -> Option<PathId> {
+        self.open_paths()
+            .filter(|(_, path)| *path == addr)
+            .map(|(id, _)| id)
+            .min()
+    }
+
+    fn selection_data(&self, conn: noq::Connection) -> impl Iterator<Item = PathSelectionData<'_>> {
+        self.open_paths()
+            .map(move |(id, addr)| PathSelectionData::live(addr, id, conn.clone()))
+    }
+
+    fn select_path(&self, conn: &noq::Connection, selector: &dyn PathSelector) -> Option<PathId> {
+        let current = self
+            .selected_path
+            .as_ref()
+            .and_then(|addr| self.path_id(addr));
+        let ctx = PathSelectionContext {
+            current: current.map(|id| &self.paths[&id].addr),
+            source: PathsSource::Connection(self, conn),
+        };
+        selector
+            .select(&ctx)
+            .selected()
+            .and_then(|addr| self.path_id(addr))
+            .or(current)
+    }
+
     /// Tracks an open path for the connection.
     fn add_open_path(
         &mut self,
@@ -1299,7 +1352,13 @@ impl ConnectionState {
             metrics.num_conns_direct.inc();
         }
 
-        self.paths.insert(path_id, network_path.clone());
+        self.paths
+            .entry(path_id)
+            .and_modify(|path| path.addr = network_path.clone())
+            .or_insert_with(|| ConnectionPath {
+                addr: network_path.clone(),
+                closing: false,
+            });
         if let Some(conn) = self.handle.upgrade()
             && let Some(path) = conn.path(path_id)
         {
@@ -1314,7 +1373,7 @@ impl ConnectionState {
         path_id: &PathId,
         conn: &noq::Connection,
     ) -> Option<transports::FourTuple> {
-        let addr = self.paths.remove(path_id)?;
+        let addr = self.paths.remove(path_id)?.addr;
         self.path_state.record_abandoned(*path_id, conn);
         Some(addr)
     }
@@ -1336,6 +1395,7 @@ pub struct PathSelectionContext<'a> {
 #[derive(Debug)]
 enum PathsSource<'a> {
     Live(&'a FxHashMap<ConnId, ConnectionState>),
+    Connection(&'a ConnectionState, &'a noq::Connection),
     #[cfg(test)]
     Test(Vec<PathSelectionData<'a>>),
 }
@@ -1379,12 +1439,9 @@ impl<'a> PathSelectionContext<'a> {
                 connections
                     .values()
                     .filter_map(|state| state.handle.upgrade().map(|conn| (state, conn)))
-                    .flat_map(|(state, conn)| {
-                        state.paths.iter().map(move |(path_id, addr)| {
-                            PathSelectionData::live(addr, *path_id, conn.clone())
-                        })
-                    }),
+                    .flat_map(|(state, conn)| state.selection_data(conn)),
             ),
+            PathsSource::Connection(state, conn) => Box::new(state.selection_data((*conn).clone())),
             #[cfg(test)]
             PathsSource::Test(paths) => Box::new(paths.iter().cloned()),
         }
@@ -1469,6 +1526,9 @@ pub trait PathSelector: Send + Sync + std::fmt::Debug + 'static {
     ///
     /// Build the result by starting from [`PathSelection::none`] and calling
     /// [`PathSelection::set`] for the path the selector wants active.
+    ///
+    /// If the preferred path is unavailable on a connection, the selector is also
+    /// called with just that connection's paths and current selection.
     ///
     /// Returning an empty [`PathSelection`] keeps the current selection unchanged.
     fn select(&self, ctx: &PathSelectionContext<'_>) -> PathSelection;
