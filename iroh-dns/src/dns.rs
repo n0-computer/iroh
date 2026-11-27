@@ -132,10 +132,8 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to DNS operations.
 ///
-/// Distinct, matchable causes have their own variant, such as [`Self::NxDomain`]
-/// (a nameserver reported the name does not exist, unlike a transient transport
-/// or timeout failure). Any other cause is reported as [`Self::Resolve`], whose
-/// [`AnyError`] source carries the underlying error.
+/// Uncategorized causes are reported as [`Self::Resolve`], whose [`AnyError`]
+/// source carries the underlying error.
 ///
 /// The resolver backing this crate is an implementation detail and its error
 /// types are not part of the public API. If you depend on `n0-dns-resolver`
@@ -183,6 +181,39 @@ pub enum DnsError {
     // discriminants.
     #[error("Domain name does not exist (NXDOMAIN)")]
     NxDomain {},
+    /// A nameserver returned an error response code (such as `SERVFAIL` or `REFUSED`).
+    ///
+    /// Unlike a timeout or transport failure, a nameserver answered the query.
+    #[error("Nameserver returned error response code: {code}")]
+    ServerError {
+        /// The error response code returned by the nameserver.
+        code: ResponseCode,
+    },
+}
+
+/// A DNS response code (RCODE) explaining why a nameserver could not answer.
+///
+/// Only error codes reach this type. A successful `NoError` response is not an
+/// error, and a non-existent name is reported as [`DnsError::NxDomain`] rather
+/// than as a response code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
+#[non_exhaustive]
+pub enum ResponseCode {
+    /// The nameserver failed to process the query (`SERVFAIL`).
+    #[display("SERVFAIL")]
+    ServerFailure,
+    /// The nameserver refused to answer, for example by policy (`REFUSED`).
+    #[display("REFUSED")]
+    Refused,
+    /// The query was malformed (`FORMERR`).
+    #[display("FORMERR")]
+    FormatError,
+    /// The nameserver does not support the requested operation (`NOTIMP`).
+    #[display("NOTIMP")]
+    NotImplemented,
+    /// Another, less common response code.
+    #[display("other response code")]
+    Other,
 }
 
 /// Potential errors related to DNS endpoint address lookups.
@@ -597,6 +628,17 @@ impl Resolver for DefaultResolver {
     }
 }
 
+fn map_response_code(code: n0_dns_resolver::ResponseCode) -> ResponseCode {
+    use n0_dns_resolver::ResponseCode as C;
+    match code {
+        C::ServerFailure => ResponseCode::ServerFailure,
+        C::Refused => ResponseCode::Refused,
+        C::FormatError => ResponseCode::FormatError,
+        C::NotImplemented => ResponseCode::NotImplemented,
+        C::Other | _ => ResponseCode::Other,
+    }
+}
+
 /// Maps an [`n0_dns_resolver::Error`] onto this crate's [`DnsError`].
 ///
 /// A private function rather than a `From` impl, so `n0_dns_resolver`'s error
@@ -610,6 +652,9 @@ fn map_resolve_error(err: n0_dns_resolver::Error) -> DnsError {
         E::Timeout { .. } => e!(DnsError::Timeout),
         E::NoResponse { .. } => e!(DnsError::NoResponse),
         E::NxDomain { .. } => e!(DnsError::NxDomain),
+        E::ServerError { code, .. } => e!(DnsError::ServerError {
+            code: map_response_code(code),
+        }),
         E::InvalidResponse { .. } => e!(DnsError::InvalidResponse),
         other => e!(DnsError::Resolve, AnyError::from_stack(other)),
     }
@@ -1412,5 +1457,79 @@ pub(crate) mod tests {
             .lookup_ipv4("bar.example", Duration::from_secs(1))
             .await;
         assert!(matches!(res, Err(DnsError::NoResponse { .. })))
+    }
+
+    #[test]
+    fn response_code_mapping_and_display() {
+        use n0_dns_resolver::ResponseCode as Src;
+        let cases = [
+            (Src::ServerFailure, ResponseCode::ServerFailure, "SERVFAIL"),
+            (Src::Refused, ResponseCode::Refused, "REFUSED"),
+            (Src::FormatError, ResponseCode::FormatError, "FORMERR"),
+            (Src::NotImplemented, ResponseCode::NotImplemented, "NOTIMP"),
+            (Src::Other, ResponseCode::Other, "other response code"),
+        ];
+        for (src, expected, display) in cases {
+            let mapped = map_response_code(src);
+            assert_eq!(mapped, expected);
+            assert_eq!(mapped.to_string(), display);
+        }
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn server_error_maps_servfail_and_refused() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        use simple_dns::{Packet, PacketFlag, RCODE};
+
+        for (rcode, expected) in [
+            (RCODE::ServerFailure, ResponseCode::ServerFailure),
+            (RCODE::Refused, ResponseCode::Refused),
+        ] {
+            let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind udp");
+            let addr = socket.local_addr().expect("local addr");
+            socket
+                .set_read_timeout(Some(Duration::from_millis(50)))
+                .expect("set_read_timeout");
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_flag = Arc::clone(&stop);
+
+            let handle = std::thread::spawn(move || {
+                let mut buf = [0u8; 512];
+                while !stop_flag.load(Ordering::Relaxed) {
+                    let Ok((len, peer)) = socket.recv_from(&mut buf) else {
+                        continue;
+                    };
+                    let Ok(req) = Packet::parse(&buf[..len]) else {
+                        continue;
+                    };
+                    let mut reply = Packet::new_reply(req.id());
+                    reply.set_flags(PacketFlag::RESPONSE | PacketFlag::RECURSION_DESIRED);
+                    *reply.rcode_mut() = rcode;
+                    reply.questions = req.questions;
+                    if let Ok(bytes) = reply.build_bytes_vec() {
+                        let _ = socket.send_to(&bytes, peer);
+                    }
+                }
+            });
+
+            let resolver = DnsResolver::builder()
+                .add_nameserver_config(NameserverConfig::udp(addr.ip()).with_port(addr.port()))
+                .disable_fallback()
+                .build();
+            let err = resolver
+                .lookup_ipv4("example.invalid", Duration::from_secs(2))
+                .await
+                .err()
+                .expect("expected DNS server error");
+            stop.store(true, Ordering::Relaxed);
+            handle.join().expect("server thread panicked");
+
+            assert!(
+                matches!(err, DnsError::ServerError { code, .. } if code == expected),
+                "expected DnsError::ServerError({expected:?}), got {err:?}"
+            );
+        }
     }
 }
