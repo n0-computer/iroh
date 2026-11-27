@@ -56,6 +56,7 @@ use super::{
 #[cfg(not(wasm_browser))]
 use crate::address_lookup::DNS_STAGGERING_MS;
 use crate::{
+    endpoint::NetworkState,
     net_report::defaults::timeouts::{
         CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
     },
@@ -89,8 +90,8 @@ impl IfStateDetails {
     }
 }
 
-impl From<netwatch::netmon::State> for IfStateDetails {
-    fn from(value: netwatch::netmon::State) -> Self {
+impl From<&NetworkState> for IfStateDetails {
+    fn from(value: &NetworkState) -> Self {
         IfStateDetails {
             have_v4: value.have_v4,
             have_v6: value.have_v6,
