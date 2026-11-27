@@ -438,9 +438,6 @@ impl RelayAddrMap {
     /// Returns the [`RelayMappedAddr`] for `key`, pinning it for the endpoint it names.
     pub(super) fn get_pinned(&self, key: &(RelayUrl, EndpointId)) -> RelayMappedAddr {
         let mut inner = self.inner.lock().expect("poisoned");
-        if !inner.entries.addrs.contains_key(key) {
-            inner.entries.insert(key);
-        }
         inner.entries.pin(key)
     }
 
@@ -488,7 +485,7 @@ impl RelayAddrMap {
             }
             Some(RelayEntry { addr, queued: None }) => *addr,
             None => {
-                let addr = inner.entries.insert(key);
+                let addr = inner.entries.get_or_insert(key).addr;
                 inner.enqueue(key);
                 addr
             }
@@ -638,23 +635,23 @@ impl RelayAddrMapInner {
 }
 
 impl RelayEntries {
-    /// Generates and inserts a fresh entry for `key` (which must not already exist).
+    /// Returns the entry for `key`, inserting one with a fresh address if needed.
     ///
-    /// The caller must immediately either pin or enqueue the new entry.
-    fn insert(&mut self, key: &(RelayUrl, EndpointId)) -> RelayMappedAddr {
-        let addr = generate_unique(&self.lookup);
-        self.addrs
-            .insert(key.clone(), RelayEntry { addr, queued: None });
-        self.lookup.insert(addr, key.clone());
-        trace!(?addr, ?key, "generated new addr");
-        addr
+    /// The caller must immediately either pin or enqueue a new entry.
+    fn get_or_insert(&mut self, key: &(RelayUrl, EndpointId)) -> &mut RelayEntry {
+        self.addrs.entry(key.clone()).or_insert_with(|| {
+            let addr = generate_unique(&self.lookup);
+            self.lookup.insert(addr, key.clone());
+            trace!(?addr, ?key, "generated new addr");
+            RelayEntry { addr, queued: None }
+        })
     }
 
-    /// Marks the existing entry for `key` as pinned by the endpoint it names.
+    /// Marks the entry for `key` as pinned by the endpoint it names, inserting it if needed.
     fn pin(&mut self, key: &(RelayUrl, EndpointId)) -> RelayMappedAddr {
-        let entry = self.addrs.get_mut(key).expect("checked by caller");
-        entry.queued = None;
         self.pinned.entry(key.1).or_default().insert(key.0.clone());
+        let entry = self.get_or_insert(key);
+        entry.queued = None;
         entry.addr
     }
 
