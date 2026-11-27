@@ -22,6 +22,12 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 /// which seems reasonable for a server.
 pub const DEFAULT_KEY_CACHE_CAPACITY: usize = 1024 * 1024;
 
+/// Listen backlog when none is configured.
+/// Tokio and std default to 128, which
+/// overflows under bursts of slow handshakes.
+#[cfg(feature = "server")]
+pub(crate) const DEFAULT_LISTEN_BACKLOG: u32 = 1024;
+
 /// Contains all timeouts that we use in `iroh`.
 #[cfg(not(wasm_browser))]
 pub mod timeouts {
