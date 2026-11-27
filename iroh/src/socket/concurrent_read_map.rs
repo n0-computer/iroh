@@ -8,15 +8,17 @@
 
 use std::{hash::Hash, sync::Arc};
 
-use rustc_hash::FxBuildHasher;
-
 /// A map that can be modified from only one task but read from many others.
 ///
 /// Only the single `&mut self`-based "leader" which owns this map can modify it, but cheaply
 /// clonable "followers" can be created with [`ConcurrentReadMap::read_only`].
 /// These clones will update with recent writes from the leader.
+///
+/// Uses a randomly keyed hasher because keys may be chosen by remote peers in the way iroh
+/// uses this map: enough colliding hash bits can stall [`papaya::HashMap`] resizing, causing
+/// subsequent iterations to hang.
 #[derive(Debug)]
-pub(crate) struct ConcurrentReadMap<K: Hash + Eq, V>(Arc<papaya::HashMap<K, V, FxBuildHasher>>);
+pub(crate) struct ConcurrentReadMap<K: Hash + Eq, V>(Arc<papaya::HashMap<K, V>>);
 
 impl<K: Hash + Eq, V> Default for ConcurrentReadMap<K, V> {
     fn default() -> Self {
@@ -50,7 +52,7 @@ impl<K: Hash + Eq, V> ConcurrentReadMap<K, V> {
 ///
 /// These can be cloned cheaply and will read recent writes from the original map.
 #[derive(Clone, Debug)]
-pub(crate) struct ReadOnlyMap<K: Hash + Eq, V>(Arc<papaya::HashMap<K, V, FxBuildHasher>>);
+pub(crate) struct ReadOnlyMap<K: Hash + Eq, V>(Arc<papaya::HashMap<K, V>>);
 
 impl<K: Hash + Eq, V> ReadOnlyMap<K, V> {
     pub(crate) fn get(&self, key: &K) -> Option<V>
