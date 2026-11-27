@@ -999,9 +999,11 @@ impl State {
         conn_state: &mut ConnectionState,
         path: &noq::Path,
     ) -> Option<transports::FourTuple> {
+        let mapped_path = path.network_path().ok()?;
+        // Relay paths created on receive are evictable; pin them until this actor stops.
         let network_path = self
             .mapped_addrs
-            .to_transport_tuple(&path.network_path().ok()?)?;
+            .to_pinned_transport_tuple(&mapped_path, &self.endpoint_id)?;
         event!(
             target: "iroh::_events::path::open",
             Level::DEBUG,
@@ -1065,7 +1067,9 @@ impl State {
             return;
         }
 
-        let mapped_4tuple = self.mapped_addrs.to_mapped_tuple(open_4tuple);
+        let mapped_4tuple = self
+            .mapped_addrs
+            .to_mapped_tuple(open_4tuple, &self.endpoint_id);
         let path_status = self.path_status_for_addr(open_4tuple);
 
         let fut = conn.open_path_ensure(mapped_4tuple, path_status);

@@ -638,11 +638,12 @@ impl Socket {
                         .recv_data_relay
                         .inc_by(noq_meta.len as _);
 
-                    // Fill in the correct mapped address
+                    // Fill in the mapped address. `src_node` comes from the relay, so new
+                    // entries are unpinned and bounded per relay.
                     let mapped_addr = self
                         .mapped_addrs
                         .relay_addrs
-                        .get(&(src_url.clone(), *src_node));
+                        .get_unpinned(&(src_url.clone(), *src_node));
                     noq_meta.addr = mapped_addr.private_socket_addr();
                 }
                 transports::Addr::Custom(remote) => {
