@@ -67,6 +67,11 @@ use crate::{endpoint::RelayStatus, net_report::Report, socket::Metrics as Socket
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
 
+/// Maximum number of entries in [`ConnectedRelayState::endpoints_present`].
+///
+/// Caps memory growth from a relay advertising arbitrary source [`EndpointId`]s.
+const MAX_ENDPOINTS_PRESENT: usize = 4096;
+
 /// Interval in which we ping the relay server to ensure the connection is alive.
 ///
 /// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
@@ -776,7 +781,12 @@ impl ActiveRelayActor {
                 {
                     // Avoid map lookup with high throughput single peer.
                     state.last_packet_src = Some(remote_endpoint_id);
-                    state.endpoints_present.insert(remote_endpoint_id);
+                    // Cap `endpoints_present` since the relay controls `remote_endpoint_id`;
+                    // omitting a peer beyond the cap only skips preferring this relay as a
+                    // send-side heuristic.
+                    if state.endpoints_present.len() < MAX_ENDPOINTS_PRESENT {
+                        state.endpoints_present.insert(remote_endpoint_id);
+                    }
                 }
 
                 if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {

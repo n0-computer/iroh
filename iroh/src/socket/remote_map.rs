@@ -7,12 +7,12 @@ use std::{
     task::{Context, Poll, Waker, ready},
 };
 
-use iroh_base::{CustomAddr, EndpointAddr, EndpointId, RelayUrl};
+use iroh_base::{CustomAddr, EndpointAddr, EndpointId};
 use n0_future::task::JoinSet;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, error, trace};
+use tracing::{Span, debug, error, trace};
 
 pub(crate) use self::remote_state::PathStateReceiver;
 use self::remote_state::RemoteStateActor;
@@ -33,7 +33,7 @@ use super::{
     DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{
         AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MappedAddr, MultipathMappedAddr,
-        RelayMappedAddr,
+        RelayAddrMap,
     },
     transports,
 };
@@ -74,25 +74,59 @@ pub(crate) struct RemoteMap {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MappedAddrs {
     /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
+    ///
+    /// Entries are inserted when the endpoint's `RemoteStateActor` starts and removed when
+    /// it stops.
     pub(super) endpoint_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
-    /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
-    pub(super) relay_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// The mapping between endpoints via a relay and their [`RelayMappedAddr`](super::mapped_addrs::RelayMappedAddr)s.
+    ///
+    /// A relay chooses the source [`EndpointId`] of incoming datagrams, so entries created
+    /// on receive are bounded per relay, see [`RelayAddrMap`].
+    pub(super) relay_addrs: RelayAddrMap,
     /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
+    ///
+    /// Custom transports are supplied by the local application, so entries are never
+    /// removed.
     pub(super) custom_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
 }
 
 impl MappedAddrs {
+    /// Releases the mapped addresses of `endpoint_id` after its `RemoteStateActor` stopped.
+    fn release_endpoint(&self, endpoint_id: &EndpointId) {
+        // Without an actor, transmits to this address are dropped anyway.
+        self.endpoint_addrs.remove(endpoint_id);
+        self.relay_addrs.unpin_endpoint(endpoint_id);
+    }
+
     /// Converts a possibly mapped-IP address into a [`transports::Addr`].
     pub(crate) fn to_transport_addr(&self, addr: SocketAddr) -> Option<transports::Addr> {
         to_transport_addr(addr, &self.relay_addrs, &self.custom_addrs)
     }
 
-    /// Converts a possibly mapped-IP 4-tuple into a [`transports::FourTuple`].
-    pub(crate) fn to_transport_tuple(
+    /// Converts a mapped-IP 4-tuple to a [`transports::FourTuple`], pinning relay addresses.
+    ///
+    /// `endpoint_id` is the remote of the connection using the path. Returns `None` for relay
+    /// paths that name another endpoint: a relay chooses the source [`EndpointId`] of the
+    /// datagrams it forwards, so it could otherwise make the actor of `endpoint_id` use, and
+    /// later pin, entries for arbitrary endpoints.
+    pub(crate) fn to_pinned_transport_tuple(
         &self,
         four_tuple: &noq::FourTuple,
+        endpoint_id: &EndpointId,
     ) -> Option<transports::FourTuple> {
-        let remote = to_transport_addr(four_tuple.remote(), &self.relay_addrs, &self.custom_addrs)?;
+        let remote = match MultipathMappedAddr::from(four_tuple.remote()) {
+            MultipathMappedAddr::Relay(addr) => {
+                let Some(key) = self.relay_addrs.pin_addr(&addr, endpoint_id) else {
+                    debug!(
+                        ?addr,
+                        "unknown relay mapped addr or path names another endpoint"
+                    );
+                    return None;
+                };
+                transports::Addr::from(key)
+            }
+            addr => to_transport_addr(addr, &self.relay_addrs, &self.custom_addrs)?,
+        };
         let local = LocalTransportAddr::from_noq_local_ip(
             four_tuple.local_ip(),
             &remote,
@@ -101,16 +135,22 @@ impl MappedAddrs {
         Some(transports::FourTuple::new(remote, local))
     }
 
-    /// Converts a [`transports::FourTuple`] to a mapped-IP 4-tuple.
-    pub(crate) fn to_mapped_tuple(&self, four_tuple: &transports::FourTuple) -> noq::FourTuple {
+    /// Converts a [`transports::FourTuple`] to a mapped-IP 4-tuple, pinning relay addresses.
+    ///
+    /// Relay addresses are pinned for `owner`, the remote of the connection using the path,
+    /// so they are unpinned again when the actor of `owner` stops.
+    pub(crate) fn to_mapped_tuple(
+        &self,
+        four_tuple: &transports::FourTuple,
+        owner: &EndpointId,
+    ) -> noq::FourTuple {
         let (remote, local) = match four_tuple {
             transports::FourTuple::Ip { remote, local } => (*remote, *local),
-            transports::FourTuple::Relay { url, endpoint_id } => (
-                self.relay_addrs
-                    .get(&(url.clone(), *endpoint_id))
-                    .private_socket_addr(),
-                None,
-            ),
+            transports::FourTuple::Relay { url, endpoint_id } => {
+                debug_assert_eq!(endpoint_id, owner, "relay path names another endpoint");
+                let addr = self.relay_addrs.get_pinned(&(url.clone(), *owner));
+                (addr.private_socket_addr(), None)
+            }
             transports::FourTuple::Custom { remote, local } => {
                 let remote = self.custom_addrs.get(remote).private_socket_addr();
                 let local = local.as_ref().map(|custom_addr| {
@@ -137,7 +177,7 @@ impl MappedAddrs {
 /// Returns `None` for [`MultipathMappedAddr::Mixed`] addresses or unknown mapped addresses.
 fn to_transport_addr(
     addr: impl Into<MultipathMappedAddr>,
-    relay_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    relay_addrs: &RelayAddrMap,
     custom_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
 ) -> Option<transports::Addr> {
     match addr.into() {
@@ -284,6 +324,7 @@ impl RemoteMap {
         if leftover_msgs.is_empty() {
             // the actor shut down cleanly
             self.senders.remove(&remote_id);
+            self.mapped_addrs.release_endpoint(&remote_id);
             trace!(%remote_id, "cleaned up RemoteStateActor");
             true
         } else {
@@ -429,7 +470,7 @@ mod tests {
 
     use bytes::Bytes;
     use futures_util::StreamExt;
-    use iroh_base::{SecretKey, TransportAddr};
+    use iroh_base::{RelayUrl, SecretKey, TransportAddr};
     use n0_future::future::now_or_never;
     use n0_tracing_test::traced_test;
     use n0_watcher::Watchable;
@@ -657,5 +698,67 @@ mod tests {
         let outcome3 = rx3.await.expect("the resolve tx must be sent");
         assert!(outcome2.is_ok(), "expected Ok, but got {outcome2:?}");
         assert!(outcome3.is_ok(), "expected Ok, but got {outcome3:?}");
+    }
+
+    /// A relay can label a path of one endpoint with another [`EndpointId`]. Such paths
+    /// must not be registered by the actor, or their entries would stay pinned.
+    #[test]
+    fn relay_paths_naming_another_endpoint_are_not_pinned() {
+        let mapped_addrs = MappedAddrs::default();
+        let real = SecretKey::from_bytes(&[1u8; 32]).public();
+        let forged = SecretKey::from_bytes(&[2u8; 32]).public();
+        let url: RelayUrl = "https://relay.example".parse().unwrap();
+
+        // Received over the relay, labelled with `forged`.
+        let addr = mapped_addrs
+            .relay_addrs
+            .get_unpinned(&(url.clone(), forged));
+        let path = noq::FourTuple::new(addr.private_socket_addr(), None);
+        assert_eq!(mapped_addrs.to_pinned_transport_tuple(&path, &real), None);
+        assert!(!mapped_addrs.relay_addrs.is_pinned(&addr));
+        assert_eq!(mapped_addrs.relay_addrs.len(), 1);
+
+        // The actor of `forged` itself may pin it.
+        let forged_path = transports::FourTuple::Relay {
+            url: url.clone(),
+            endpoint_id: forged,
+        };
+        assert_eq!(
+            mapped_addrs.to_pinned_transport_tuple(&path, &forged),
+            Some(forged_path)
+        );
+        assert!(mapped_addrs.relay_addrs.is_pinned(&addr));
+    }
+
+    /// When an actor stops cleanly, its endpoint mapped address is removed and its relay
+    /// mapped addresses are unpinned but kept for in-flight handshakes.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[traced_test]
+    async fn cleanup_releases_mapped_addrs() {
+        let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
+        let eid = SecretKey::from_bytes(&[0u8; 32]).public();
+        let url: RelayUrl = "https://relay.example".parse().unwrap();
+
+        // Non-empty addrs so the actor replies right away and can idle out afterwards.
+        let addr = EndpointAddr::from_parts(
+            eid,
+            [TransportAddr::Ip(SocketAddr::from(([127, 0, 0, 1], 1234)))],
+        );
+        let (tx, rx) = oneshot::channel();
+        remote_map.resolve_remote(addr, tx).await;
+        assert!(matches!(rx.await, Ok(Ok(()))));
+
+        let mapped_addrs = remote_map.mapped_addrs.clone();
+        let endpoint_addr = mapped_addrs.endpoint_addrs.get(&eid);
+        let relay_addr = mapped_addrs.relay_addrs.get_pinned(&(url, eid));
+        assert!(mapped_addrs.relay_addrs.is_pinned(&relay_addr));
+
+        // Let the actor idle out and clean up its task.
+        tokio::time::sleep(Duration::from_secs(65)).await;
+        assert_eq!(remote_map.cleanup().await, eid);
+
+        assert_eq!(mapped_addrs.endpoint_addrs.lookup(&endpoint_addr), None);
+        assert!(mapped_addrs.relay_addrs.lookup(&relay_addr).is_some());
+        assert!(!mapped_addrs.relay_addrs.is_pinned(&relay_addr));
     }
 }
