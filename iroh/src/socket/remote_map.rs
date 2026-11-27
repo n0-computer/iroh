@@ -32,8 +32,8 @@ pub(crate) use self::remote_state::{
 use super::{
     DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{
-        AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MappedAddr, MultipathMappedAddr,
-        RelayMappedAddr,
+        AddrMap, ConnectingAddrMap, CustomMappedAddr, EndpointIdMappedAddr, MappedAddr,
+        MultipathMappedAddr, RelayMappedAddr,
     },
     transports,
 };
@@ -73,8 +73,8 @@ pub(crate) struct RemoteMap {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MappedAddrs {
-    /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
-    pub(super) endpoint_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
+    /// Mapped addresses for individual outgoing handshakes.
+    pub(super) endpoint_addrs: ConnectingAddrMap,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     pub(super) relay_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
@@ -311,11 +311,16 @@ impl RemoteMap {
     pub(super) async fn resolve_remote(
         &mut self,
         addr: EndpointAddr,
+        attempt: EndpointIdMappedAddr,
+        finished: CancellationToken,
         tx: oneshot::Sender<Result<(), AddressLookupFailed>>,
     ) {
         let EndpointAddr { id, addrs } = addr;
-        self.send_to_actor(id, RemoteStateMessage::ResolveRemote(addrs, tx))
-            .await
+        self.send_to_actor(
+            id,
+            RemoteStateMessage::ResolveRemote(addrs, attempt, finished, tx),
+        )
+        .await
     }
 
     pub(super) async fn add_connection(
@@ -373,8 +378,6 @@ impl Tasks {
         initial_msgs: Vec<RemoteStateMessage>,
         mapped_addrs: &MappedAddrs,
     ) -> mpsc::Sender<RemoteStateMessage> {
-        // Ensure there is a RemoteMappedAddr for this EndpointId.
-        mapped_addrs.endpoint_addrs.get(&eid);
         let sender = RemoteStateActor::new(
             eid,
             self.local_direct_addrs.clone(),
@@ -439,6 +442,7 @@ mod tests {
     use super::*;
     use crate::socket::{
         biased_rtt_path_selector::BiasedRttPathSelector,
+        mapped_addrs::ConnectionAttempt,
         transports::{OwnedTransmit, Transmit},
     };
 
@@ -454,7 +458,8 @@ mod tests {
 
     async fn check_initial_send_inbox(queued: usize) {
         let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
-        let (endpoint_id, mut receiver) = enqueue_initials(&mut remote_map, queued, 1).await;
+        let (endpoint_id, _attempt, mut receiver) =
+            enqueue_initials(&mut remote_map, queued, 1).await;
         let (info_tx, info_rx) = oneshot::channel();
         remote_map
             .send_to_actor(endpoint_id, RemoteStateMessage::RemoteInfo(info_tx))
@@ -475,7 +480,7 @@ mod tests {
     #[tokio::test]
     async fn pending_initial_sends_are_cancelled_on_shutdown() {
         let (mut remote_map, shutdown_token, _guards) = make_remote_map();
-        let (endpoint_id, receiver) = enqueue_initials(&mut remote_map, 256, 1).await;
+        let (endpoint_id, _attempt, receiver) = enqueue_initials(&mut remote_map, 256, 1).await;
         wait_for_inbox(&mut remote_map, endpoint_id).await;
         shutdown_token.cancel();
         tokio::time::timeout(Duration::from_secs(1), remote_map.cleanup())
@@ -490,7 +495,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn pending_initial_sends_expire_without_sending_late_packets() {
         let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
-        let (endpoint_id, receiver) = enqueue_initials(&mut remote_map, 256, 1).await;
+        let (endpoint_id, _attempt, receiver) = enqueue_initials(&mut remote_map, 256, 1).await;
         wait_for_inbox(&mut remote_map, endpoint_id).await;
         tokio::time::sleep(Duration::from_secs(4)).await;
         let remaining = tokio::time::timeout(Duration::from_secs(1), receiver.count())
@@ -502,12 +507,27 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn congested_initial_sends_have_bounded_pending_work() {
         let (mut remote_map, _shutdown_token, _guards) = make_remote_map();
-        let (endpoint_id, receiver) = enqueue_initials(&mut remote_map, 256, 32).await;
+        let (endpoint_id, _attempt, receiver) = enqueue_initials(&mut remote_map, 256, 32).await;
         wait_for_inbox(&mut remote_map, endpoint_id).await;
         let remaining = tokio::time::timeout(Duration::from_secs(1), receiver.count())
             .await
             .expect("Initial sends did not finish after draining the queue");
         assert_eq!(remaining, 256 + 16);
+    }
+
+    async fn resolve(
+        remote_map: &mut RemoteMap,
+        addr: EndpointAddr,
+    ) -> (
+        ConnectionAttempt,
+        oneshot::Receiver<Result<(), AddressLookupFailed>>,
+    ) {
+        let attempt = remote_map.mapped_addrs.endpoint_addrs.insert(addr.id);
+        let (tx, rx) = oneshot::channel();
+        remote_map
+            .resolve_remote(addr, attempt.addr, attempt.finished.clone(), tx)
+            .await;
+        (attempt, rx)
     }
 
     async fn enqueue_initials(
@@ -516,17 +536,16 @@ mod tests {
         count: usize,
     ) -> (
         EndpointId,
+        ConnectionAttempt,
         impl futures_util::Stream<Item = ()> + Unpin + use<>,
     ) {
         let endpoint_id = SecretKey::from_bytes(&[1u8; 32]).public();
         let relay_url: RelayUrl = "https://relay.example.invalid".parse().unwrap();
-        let (resolve_tx, resolve_rx) = oneshot::channel();
-        remote_map
-            .resolve_remote(
-                EndpointAddr::from_parts(endpoint_id, [TransportAddr::Relay(relay_url.clone())]),
-                resolve_tx,
-            )
-            .await;
+        let (attempt, resolve_rx) = resolve(
+            remote_map,
+            EndpointAddr::from_parts(endpoint_id, [TransportAddr::Relay(relay_url.clone())]),
+        )
+        .await;
         assert!(resolve_rx.await.expect("resolve response").is_ok());
 
         // Hold the receiver to apply backpressure without changing poll_send.
@@ -554,6 +573,8 @@ mod tests {
                 .send_to_actor(
                     endpoint_id,
                     RemoteStateMessage::SendDatagram(
+                        attempt.addr,
+                        attempt.finished.clone(),
                         Box::new(sender.clone()),
                         OwnedTransmit {
                             ecn: None,
@@ -564,23 +585,19 @@ mod tests {
                 )
                 .await;
         }
-        (endpoint_id, receiver)
+        (endpoint_id, attempt, receiver.map(|_| ()))
     }
 
     async fn wait_for_inbox(remote_map: &mut RemoteMap, endpoint_id: EndpointId) {
-        // Resolve is queued after the sends, so its reply marks them as handled.
+        // The info request is queued after the sends, so its reply marks them as handled.
         let (ack_tx, ack_rx) = oneshot::channel();
         remote_map
-            .send_to_actor(
-                endpoint_id,
-                RemoteStateMessage::ResolveRemote(BTreeSet::new(), ack_tx),
-            )
+            .send_to_actor(endpoint_id, RemoteStateMessage::RemoteInfo(ack_tx))
             .await;
         tokio::time::timeout(Duration::from_secs(1), ack_rx)
             .await
             .expect("inbox stalled")
-            .expect("actor dropped acknowledgement")
-            .expect("resolve acknowledgement");
+            .expect("actor dropped acknowledgement");
     }
 
     fn make_remote_map() -> (RemoteMap, CancellationToken, impl Sized) {
@@ -619,12 +636,13 @@ mod tests {
         };
 
         // 1. Spawn A1 and let it process a real `ResolveRemote`.
-        let (tx1, rx1) = oneshot::channel();
-        remote_map.resolve_remote(addr_with_ip(1234), tx1).await;
+        let (attempt1, rx1) = resolve(&mut remote_map, addr_with_ip(1234)).await;
         assert!(
             matches!(rx1.await, Ok(Ok(()))),
             "First resolve completes Ok"
         );
+
+        drop(attempt1);
 
         // 2. Advance past idle timeout.
         tokio::time::sleep(Duration::from_secs(65)).await;
@@ -639,8 +657,7 @@ mod tests {
         //    starting a new actor.
         //    We also resume time here so that we don't immediately idle-out again.
         tokio::time::resume();
-        let (tx2, rx2) = oneshot::channel();
-        remote_map.resolve_remote(addr_with_ip(5678), tx2).await;
+        let (_attempt2, rx2) = resolve(&mut remote_map, addr_with_ip(5678)).await;
 
         // 4. Drive `cleanup`, like the socket actor does.
         //    Before our fixes, this would remove the sender to the just-started A2 from the sender map.
@@ -650,8 +667,7 @@ mod tests {
         //    With our fix, this reaches the actor spawned above (A2); without
         //    the fix this would start a new actor because A2 was falsely removed from
         //    the senders map.
-        let (tx3, rx3) = oneshot::channel();
-        remote_map.resolve_remote(EndpointAddr::new(eid), tx3).await;
+        let (_attempt3, rx3) = resolve(&mut remote_map, EndpointAddr::new(eid)).await;
 
         let outcome2 = rx2.await.expect("the resolve tx must be sent");
         let outcome3 = rx3.await.expect("the resolve tx must be sent");

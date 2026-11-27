@@ -1179,9 +1179,10 @@ impl noq::UdpSender for Sender {
 
         let network_path = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
-                let Some(endpoint_id) = self.sock.mapped_addrs.endpoint_addrs.lookup(&mapped_addr)
+                let Some((endpoint_id, finished)) =
+                    self.sock.mapped_addrs.endpoint_addrs.lookup(&mapped_addr)
                 else {
-                    error!(dst = ?mapped_addr, "unknown NodeIdMappedAddr, dropped transmit");
+                    trace!(dst = ?mapped_addr, "dropping transmit without a live connection attempt");
                     return Poll::Ready(Ok(()));
                 };
 
@@ -1196,6 +1197,8 @@ impl noq::UdpSender for Sender {
                 match self.sock.try_send_remote_state_msg(
                     endpoint_id,
                     super::RemoteStateMessage::SendDatagram(
+                        mapped_addr,
+                        finished,
                         Box::new(self.sender.clone()),
                         OwnedTransmit::from(noq_transmit),
                     ),
@@ -1321,7 +1324,7 @@ mod tests {
             #[cfg(not(wasm_browser))] ip_configs: impl Iterator<Item = IpConfig>,
         ) -> (
             TransportsSender,
-            impl futures_util::Stream<Item = ()> + Unpin,
+            impl futures_util::Stream<Item = (RelayUrl, iroh_relay::protos::relay::Datagrams)> + Unpin,
         ) {
             use futures_util::StreamExt;
             let (sender, receiver) = RelaySender::bounded_for_test(capacity);
@@ -1336,7 +1339,8 @@ mod tests {
             };
             (
                 sender,
-                tokio_stream::wrappers::ReceiverStream::new(receiver).map(|_| ()),
+                tokio_stream::wrappers::ReceiverStream::new(receiver)
+                    .map(|item| (item.url, item.datagrams)),
             )
         }
     }
