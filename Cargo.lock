@@ -2824,8 +2824,7 @@ dependencies = [
 [[package]]
 name = "n0-dns-resolver"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0381996935dc55768ae8b13e7db69d3a90f13afb51dde80f870484027968bcd2"
+source = "git+https://github.com/n0-computer/n0-dns-resolver?branch=main#a9b500a666b616bb2c6cbf2d389ef9c1149e8eda"
 dependencies = [
  "derive_more",
  "ipconfig",
@@ -3067,30 +3066,6 @@ dependencies = [
  "windows",
  "windows-result",
  "wmi",
-]
-
-[[package]]
-name = "nix"
-version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
-dependencies = [
- "bitflags",
- "cfg-if",
- "cfg_aliases",
- "libc",
-]
-
-[[package]]
-name = "nix"
-version = "0.31.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
-dependencies = [
- "bitflags",
- "cfg-if",
- "cfg_aliases",
- "libc",
 ]
 
 [[package]]
@@ -3438,20 +3413,21 @@ checksum = "487f2ccd1e17ce8c1bfab3a65c89525af41cfad4c8659021a1e9a2aacd73b89b"
 [[package]]
 name = "patchbay"
 version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ac574c097a6fe6ee8e9e919b57f638c87d1f793124ec2f6e50bdf5fabce5b1f"
+source = "git+https://github.com/n0-computer/patchbay?branch=main#72070a51fd932e335c294644dc9dd7559b84bb44"
 dependencies = [
  "anyhow",
  "derive_more",
- "futures",
- "hickory-proto",
+ "futures-lite",
  "ipnet",
  "iroh-metrics",
  "libc",
- "nix 0.31.3",
- "rtnetlink",
+ "netlink-packet-core",
+ "netlink-packet-route",
+ "netlink-proto",
+ "rustix",
  "serde",
  "serde_json",
+ "simple-dns",
  "strum",
  "time",
  "tokio",
@@ -4038,24 +4014,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rtnetlink"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90f60a3ee149005c5819e03e3d73ba4a470bc18b52b0c8422cfe1bea2cae63c6"
-dependencies = [
- "futures-channel",
- "futures-util",
- "log",
- "netlink-packet-core",
- "netlink-packet-route",
- "netlink-proto",
- "netlink-sys",
- "nix 0.30.1",
- "thiserror 2.0.20",
- "tokio",
 ]
 
 [[package]]
