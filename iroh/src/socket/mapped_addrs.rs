@@ -5,6 +5,7 @@
 //! Address ranges we use to keep track of the various "fake" address types we use.
 
 use std::{
+    collections::HashMap,
     fmt,
     hash::Hash,
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
@@ -313,6 +314,10 @@ impl std::fmt::Display for CustomMappedAddr {
 }
 
 /// A bi-directional map between a key and a [`MappedAddr`].
+///
+/// The forward map uses the standard library's randomly seeded hasher because keys may be
+/// chosen by remotes whereas the reverse map uses `FxHashMap` because mapped addresses are
+/// generated locally at random.
 #[derive(Debug, Clone)]
 pub(super) struct AddrMap<K, V> {
     inner: Arc<std::sync::Mutex<AddrMapInner<K, V>>>,
@@ -361,7 +366,7 @@ where
 
 #[derive(Debug)]
 struct AddrMapInner<K, V> {
-    addrs: FxHashMap<K, V>,
+    addrs: HashMap<K, V>,
     lookup: FxHashMap<V, K>,
 }
 
