@@ -132,12 +132,8 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to DNS operations.
 ///
-/// Distinct, matchable causes have their own variant, such as [`Self::NxDomain`]
-/// (a nameserver reported the name does not exist) or [`Self::ServerError`]
-/// (a nameserver answered with an error response code such as `SERVFAIL` or
-/// `REFUSED`), as opposed to a transient transport or timeout failure. Any
-/// other cause is reported as [`Self::Resolve`], whose [`AnyError`] source
-/// carries the underlying error.
+/// Uncategorized causes are reported as [`Self::Resolve`], whose [`AnyError`]
+/// source carries the underlying error.
 ///
 /// The resolver backing this crate is an implementation detail and its error
 /// types are not part of the public API. If you depend on `n0-dns-resolver`
@@ -188,9 +184,6 @@ pub enum DnsError {
     /// A nameserver returned an error response code (such as `SERVFAIL` or `REFUSED`).
     ///
     /// Unlike a timeout or transport failure, a nameserver answered the query.
-    //
-    // Appended after `NxDomain` so the pre-existing variants keep their
-    // discriminants.
     #[error("Nameserver returned error response code: {code}")]
     ServerError {
         /// The error response code returned by the nameserver.
